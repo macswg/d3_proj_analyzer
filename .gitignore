@@ -1,0 +1,7 @@
+.DS_Store
+__pycache__/
+*.pyc
+# Project archives are large binaries (the example is 148 MB, over GitHub's 100 MB limit)
+*.d3
+# Snapshot JSON holds real show data; keep examples and outputs local
+*.json
