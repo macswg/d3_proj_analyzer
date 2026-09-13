@@ -78,6 +78,9 @@ class Archive(object):
                 raise ValueError("archive record out of sync at 0x{0:x}".format(off))
             total, plen = struct.unpack_from("<II", self._mm, off + 4)
             nlen = struct.unpack_from("<I", self._mm, off + 28)[0]
+            if off + total > size or 32 + nlen + plen > total:
+                raise ValueError("archive truncated or corrupt at 0x{0:x} "
+                                 "(incomplete download or copy?)".format(off))
             name = self._mm[off + 32:off + 32 + nlen].decode("utf-8", "replace")
             self.entries[name] = (off + 32 + nlen, plen)
             off += total
