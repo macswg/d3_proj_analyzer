@@ -8,11 +8,34 @@ The output is a schemaVersion 7 snapshot, the same JSON the plugin writes. It
 loads in [d3_snapshot_diff](https://macswg.github.io/d3_snapshot_diff/) and
 diffs cleanly against captures taken with the plugin.
 
-## Requirements
+There are two ways to run it. Both produce byte-identical JSON:
 
-- Python 3 (tested on 3.13). Standard library only, nothing to install.
+- **In the browser:** open `index.html` and drop a `.d3` on it. The archive is
+  read in the tab and never uploaded.
+- **From the command line:** `python3 d3_extract.py project.d3`.
 
-## Usage
+Related: [d3_snapshot_diff](https://macswg.github.io/d3_snapshot_diff/) compares
+snapshots, and the [susan_summary plugin](https://github.com/macswg/d3plg_susan_summary)
+captures them from a running Designer.
+
+## In the browser
+
+1. Open the page (`index.html`). It works from GitHub Pages or straight from a
+   local checkout, and needs no server or build step.
+2. Drop a `.d3` project onto it, or click to choose one.
+3. Check the project name. The archive doesn't store one, so it defaults to the
+   file name. Change it to the name Designer shows if you'll diff against plugin
+   captures.
+4. Click **Download snapshot JSON**, then load the file into
+   [d3_snapshot_diff](https://macswg.github.io/d3_snapshot_diff/).
+
+The page also summarises the snapshot: transports and their setlists, and the
+number of tracks, layers, cues and media references. A 148 MB archive takes
+under a second in Chrome.
+
+## From the command line
+
+Requires Python 3 (tested on 3.13). Standard library only, nothing to install.
 
 ```sh
 python3 d3_extract.py "path/to/project.d3"
@@ -90,7 +113,11 @@ build fields to show as changed.
 
 ## Files
 
-- `d3_extract.py`: the extractor.
+- `index.html`: the browser page.
+- `d3extract.js`: the extractor in JavaScript, used by the page. It also loads in
+  Node with `require('./d3extract.js')`.
+- `d3_extract.py`: the command-line extractor. It and `d3extract.js` are ports of
+  each other, so change both together.
 - `FORMAT.md`: notes on the `.d3` container and object format the extractor relies on.
 
 Project archives (`*.d3`) and snapshots (`*.json`) are gitignored, because they

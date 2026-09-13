@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%231e2128'/%3E%3Cpath%20d='M9%207h10l5%205v13H9z'%20fill='none'%20stroke='%23d7a45f'%20stroke-width='2.5'%20stroke-linejoin='round'/%3E%3Cpath%20d='M13%2018h7M13%2022h5'%20stroke='%236fd08c'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3C/svg%3E">
+<title>disguise project snapshot extractor</title>
+<style>
+  /* Same palette and type as d3_snapshot_diff, so the two read as one toolset. */
+  :root {
+    --bg: #16181d; --panel: #1e2128; --edge: #2f333c;
+    --fg: #e6e8ec; --dim: #878d99;
+    --add-fg: #6fd08c; --rm-fg: #e8737f; --ch-fg: #d7a45f;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column;
+  }
+  a { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: var(--ch-fg); }
+  code { font-family: var(--mono); font-size: 12px; }
+
+  header { padding: 18px 24px; border-bottom: 1px solid var(--edge); }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; letter-spacing: .01em; }
+  .how { margin: 0; font-size: 12.5px; color: var(--dim); max-width: 78ch; }
+  .how b { color: var(--fg); font-weight: 600; }
+
+  main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; max-width: 980px; width: 100%; }
+
+  .drop {
+    border: 1px dashed var(--edge); border-radius: 8px; padding: 30px 20px;
+    background: var(--panel); color: var(--dim); text-align: center; cursor: pointer;
+    transition: border-color .12s, color .12s;
+  }
+  .drop:hover, .drop:focus-visible { border-color: var(--dim); color: var(--fg); outline: none; }
+  .drop.over { border-color: var(--add-fg); color: var(--add-fg); }
+  .drop .big { font-size: 15px; color: var(--fg); font-weight: 500; }
+  .drop .small { font-size: 12px; margin-top: 4px; }
+  .drop.filled { border-style: solid; padding: 14px 20px; text-align: left; }
+  input[type=file] { display: none; }
+
+  .status { font-size: 13px; color: var(--dim); min-height: 20px; }
+  .status.err { color: var(--rm-fg); }
+  .status.ok { color: var(--add-fg); }
+
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 16px 18px; }
+  .panel[hidden] { display: none; }
+  h2 {
+    font-size: 11px; font-weight: 600; color: var(--dim); margin: 0 0 10px;
+    text-transform: uppercase; letter-spacing: .07em;
+  }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .07em; }
+  .field input {
+    min-width: 240px; padding: 7px 10px; border: 1px solid var(--edge); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 13px;
+  }
+  .field input:focus { outline: none; border-color: var(--dim); }
+  .field .hint { font-size: 11.5px; color: var(--dim); }
+  button.primary {
+    padding: 8px 16px; border-radius: 6px; border: 1px solid #3d6b4c; cursor: pointer;
+    background: #1c3326; color: var(--add-fg); font: inherit; font-size: 13px; font-weight: 600;
+  }
+  button.primary:hover { background: #22402f; }
+  .fname { font-family: var(--mono); font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+  .next { font-size: 12.5px; color: var(--dim); margin: 12px 0 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--edge); border-radius: 6px; padding: 9px 12px; }
+  .stat .n { font-family: var(--mono); font-size: 20px; color: var(--fg); }
+  .stat .k { font-size: 11.5px; color: var(--dim); }
+  .meta { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 14px 0 0; font-size: 12.5px; }
+  .meta dt { color: var(--dim); }
+  .meta dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th { text-align: left; font-weight: 500; color: var(--dim); padding: 4px 10px 6px 0; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+  td { padding: 4px 10px 4px 0; border-bottom: 1px solid #262a32; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .pill { font-size: 10.5px; color: var(--ch-fg); border: 1px solid #5a4a2e; border-radius: 10px; padding: 0 6px; margin-left: 6px; }
+
+  ul.notes { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--dim); }
+  ul.notes li { margin: 3px 0; }
+  ul.notes b { color: var(--fg); font-weight: 500; }
+
+  footer { padding: 14px 24px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
+  footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>disguise project snapshot extractor</h1>
+  <p class="how">
+    Drop a Designer <b>.d3 project archive</b> to get the same snapshot JSON the
+    susan_summary plugin captures: transports, setlists, tracks, layers, cues, media
+    and timecode. You don't need Designer. Load the result into
+    <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
+    to compare it with another snapshot. <b>Your project stays on this computer:</b> it's
+    read in this browser tab and never uploaded.
+  </p>
+</header>
+
+<main>
+  <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose a .d3 project archive">
+    <div class="big">Drop a .d3 project here, or click to choose one</div>
+    <div class="small">Archives of any size are read locally; nothing is sent anywhere.</div>
+  </div>
+  <input id="file" type="file" accept=".d3">
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+
+  <section id="result" class="panel" hidden>
+    <h2>Snapshot</h2>
+    <div class="actions">
+      <div class="field">
+        <label for="project">Project name</label>
+        <input id="project" spellcheck="false">
+        <span class="hint">The archive doesn't store one. Use the name Designer shows to match plugin captures.</span>
+      </div>
+      <div class="field">
+        <button id="download" class="primary" type="button">Download snapshot JSON</button>
+        <span id="fname" class="fname"></span>
+      </div>
+    </div>
+    <p class="next">
+      Next: open <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
+      and load this file next to another snapshot (from this page or from the plugin).
+    </p>
+  </section>
+
+  <section id="overview" class="panel" hidden>
+    <h2>What's in it</h2>
+    <div id="stats" class="stats"></div>
+    <dl id="meta" class="meta"></dl>
+  </section>
+
+  <section id="transports" class="panel" hidden>
+    <h2>Transports</h2>
+    <div class="table-wrap"><table id="ttable"></table></div>
+  </section>
+
+  <section id="limits" class="panel" hidden>
+    <h2>Not in a .d3 archive</h2>
+    <ul class="notes">
+      <li><b>Option switches:</b> <code>options.bin</code> and <code>machine.bin</code> aren't packed into
+        archives, so they're recorded as unknown and the diff tool will say it couldn't compare them.</li>
+      <li><b>Some build details:</b> the Designer version, revision, branch and build id are included.
+        Licence type, custom release name, RenderStream version and the release flags are left empty,
+        so they show as changed when you compare against a plugin capture.</li>
+      <li><b>Capture time:</b> set to when the archive file was last modified.</li>
+    </ul>
+    <ul id="debug" class="notes" hidden></ul>
+  </section>
+</main>
+
+<footer>
+  Related: <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
+  (compare snapshots) ·
+  <a href="https://github.com/macswg/d3plg_susan_summary" target="_blank" rel="noopener">susan_summary plugin</a>
+  (capture from a running Designer)
+</footer>
+
+<script src="d3extract.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var drop = $('drop'), input = $('file'), status = $('status');
+  var current = null;   // { snapshot, fileName }
+
+  function setStatus(text, kind) {
+    status.textContent = text;
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function safeName(project) {
+    return String(project).replace(/[^A-Za-z0-9_-]/g, '_');
+  }
+
+  function outputName() {
+    var s = current.snapshot;
+    return s.capturedAt.slice(0, 19).replace('T', '_').replace(/:/g, '-') + '_' + safeName(s.project) + '.json';
+  }
+
+  function formatBytes(n) {
+    return n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1e3)) + ' KB';
+  }
+
+  function handle(file) {
+    if (!file) return;
+    ['result', 'overview', 'transports', 'limits'].forEach(function (id) { $(id).hidden = true; });
+    drop.classList.add('filled');
+    drop.querySelector('.big').textContent = file.name;
+    drop.querySelector('.small').textContent = formatBytes(file.size) + ' · drop or click to choose another project';
+    setStatus('Reading ' + file.name + '…');
+
+    file.arrayBuffer().then(function (buffer) {
+      setStatus('Extracting…');
+      // Let the status paint before the (synchronous) parse runs.
+      return new Promise(function (resolve) { setTimeout(resolve, 20); }).then(function () {
+        var started = performance.now();
+        var snapshot = D3Extract.buildSnapshot(buffer, {
+          fileName: file.name,
+          capturedAt: D3Extract.localIso(new Date(file.lastModified || Date.now()))
+        });
+        current = { snapshot: snapshot, fileName: file.name };
+        render(((performance.now() - started) / 1000).toFixed(1));
+      });
+    }).catch(function (error) {
+      current = null;
+      var msg = error && error.name === 'ParseError'
+        ? "Couldn't read this archive: " + error.message +
+          '. It may be from a Designer version this tool hasn’t seen yet, or not a complete .d3 file.'
+        : 'Something went wrong: ' + (error && error.message || error);
+      setStatus(msg, 'err');
+    });
+  }
+
+  function render(seconds) {
+    var s = current.snapshot;
+    var layers = 0, media = 0, cues = 0;
+    s.tracks.forEach(function (t) {
+      layers += t.layerCount;
+      cues += t.cues.length;
+      t.layers.forEach(function (l) { media += l.media.length; });
+    });
+
+    $('project').value = s.project;
+    $('fname').textContent = outputName();
+
+    var stats = $('stats');
+    stats.textContent = '';
+    [[s.transportCount, 'transports'], [s.trackCount, 'tracks in setlists'],
+     [s.showfile.trackCount, 'tracks in show'], [layers, 'layers'], [cues, 'cues'], [media, 'media refs']]
+      .forEach(function (pair) {
+        var box = el('div', { class: 'stat' });
+        box.appendChild(el('div', { class: 'n' }, pair[0].toLocaleString()));
+        box.appendChild(el('div', { class: 'k' }, pair[1]));
+        stats.appendChild(box);
+      });
+
+    var meta = $('meta');
+    meta.textContent = '';
+    [['Active transport', s.activeTransport || '—'],
+     ['Designer', s.system.build.version || '—'],
+     ['Captured at', s.capturedAt],
+     ['Schema', 'v' + s.schemaVersion]].forEach(function (pair) {
+      meta.appendChild(el('dt', {}, pair[0]));
+      meta.appendChild(el('dd', {}, pair[1]));
+    });
+
+    var table = $('ttable');
+    table.textContent = '';
+    var head = el('tr');
+    head.appendChild(el('th', {}, 'Transport'));
+    head.appendChild(el('th', {}, 'Setlist'));
+    head.appendChild(el('th', { class: 'num' }, 'Tracks'));
+    table.appendChild(head);
+    s.transports.forEach(function (t) {
+      var row = el('tr');
+      var name = el('td', {}, t.name);
+      if (t.name === s.activeTransport) name.appendChild(el('span', { class: 'pill' }, 'active'));
+      row.appendChild(name);
+      row.appendChild(el('td', {}, t.setlist || (t.error || '—')));
+      row.appendChild(el('td', { class: 'num' }, String(t.trackCount)));
+      table.appendChild(row);
+    });
+
+    var debug = $('debug');
+    debug.textContent = '';
+    var extra = s.debug.filter(function (line) { return line.indexOf('system.build from') !== 0; });
+    extra.forEach(function (line) { debug.appendChild(el('li', {}, line)); });
+    debug.hidden = !extra.length;
+
+    ['result', 'overview', 'transports', 'limits'].forEach(function (id) { $(id).hidden = false; });
+    setStatus('Done in ' + seconds + ' s.', 'ok');
+  }
+
+  function download() {
+    if (!current) return;
+    var s = current.snapshot;
+    s.project = $('project').value.trim() || current.fileName.replace(/\.[^.]*$/, '');
+    var name = outputName();
+    s.writtenTo = name;
+    var blob = new Blob([D3Extract.toJson(s)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = el('a', { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  drop.addEventListener('click', function () { input.click(); });
+  drop.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
+  input.addEventListener('change', function () { handle(input.files[0]); input.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (type) {
+    document.addEventListener(type, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      e.preventDefault();
+      if (type === 'drop' || e.target === document.documentElement || !e.relatedTarget) drop.classList.remove('over');
+    });
+  });
+  document.addEventListener('drop', function (e) {
+    var file = e.dataTransfer && e.dataTransfer.files[0];
+    if (file) handle(file);
+  });
+  $('project').addEventListener('input', function () {
+    if (!current) return;
+    current.snapshot.project = $('project').value.trim() || current.fileName.replace(/\.[^.]*$/, '');
+    $('fname').textContent = outputName();
+  });
+  $('download').addEventListener('click', download);
+})();
+</script>
+</body>
+</html>
