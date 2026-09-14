@@ -31,24 +31,24 @@
   main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; max-width: 980px; width: 100%; }
 
   .drop {
-    border: 1px dashed var(--edge); border-radius: 8px; padding: 14px 20px;
+    border: 1px dashed var(--edge); border-radius: 8px; padding: 8px 20px 7px; line-height: 1.35;
     background: var(--panel); color: var(--dim); text-align: center; cursor: pointer;
     transition: border-color .12s, color .12s;
   }
   .drop:hover, .drop:focus-visible { border-color: var(--dim); color: var(--fg); outline: none; }
   .drop.over { border-color: var(--add-fg); color: var(--add-fg); }
   .drop .big { font-size: 14px; color: var(--fg); font-weight: 500; }
-  .drop .small { font-size: 12px; margin-top: 2px; }
+  .drop .small { font-size: 12px; margin-top: 1px; }
   .drop.filled { border-style: solid; }
-  /* Centred above the label, not behind it: layered under a two-line label it
+  /* Centred below the label, not behind it: layered under a two-line label it
      crossed the words and read as a rendering glitch. An inline SVG with
      currentColor, not a background-image, so it follows the hover and
      drag-over colours without a second copy of the artwork. */
   .drop-icon {
-    display: block; width: 30px; height: 30px; margin: 0 auto 6px;
-    opacity: .35; pointer-events: none; transition: opacity .12s;
+    display: block; width: 22px; height: 22px; margin: 4px auto 0;
+    opacity: .5; pointer-events: none; transition: opacity .12s;
   }
-  .drop:hover .drop-icon, .drop:focus-visible .drop-icon { opacity: .6; }
+  .drop:hover .drop-icon, .drop:focus-visible .drop-icon { opacity: .75; }
   .drop.over .drop-icon { opacity: 1; }
   input[type=file] { display: none; }
 
@@ -118,14 +118,14 @@
 
 <main>
   <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose a .d3 project archive">
+    <div class="big">Drop a .d3 project here, or click to choose one</div>
+    <div class="small">Archives of any size are read locally; nothing is sent anywhere.</div>
     <svg class="drop-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M24 6v22"/>
       <path d="M15 19l9 9 9-9"/>
       <path d="M6 30v8a4 4 0 0 0 4 4h28a4 4 0 0 0 4-4v-8"/>
     </svg>
-    <div class="big">Drop a .d3 project here, or click to choose one</div>
-    <div class="small">Archives of any size are read locally; nothing is sent anywhere.</div>
   </div>
   <input id="file" type="file" accept=".d3">
   <div id="status" class="status" role="status" aria-live="polite"></div>
