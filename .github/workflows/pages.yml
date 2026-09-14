@@ -1,0 +1,48 @@
+# Deploys the page to GitHub Pages on every push to main, stamping the footer
+# with a version so the live site says which commit it is serving.
+#
+# The version is v1.0.<commits on main>: it rises by one per commit with nothing
+# to bump by hand, and the commit hash rides along in the tooltip. It is written
+# into the deployed copy only; the committed index.html keeps "dev", so stamping
+# never creates a commit of its own (and never triggers another deploy).
+name: Deploy page
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # full history, so the commit count is real
+
+      - name: Build site with version stamp
+        run: |
+          VERSION="v1.0.$(git rev-list --count HEAD)"
+          SHA="$(git rev-parse --short HEAD)"
+          mkdir -p _site
+          git archive HEAD | tar -x -C _site
+          rm -rf _site/.github
+          sed -i "s|<span id=\"ver\"[^>]*>[^<]*</span>|<span id=\"ver\" title=\"commit $SHA\">$VERSION</span>|" _site/index.html
+          # Fail rather than publish a page still claiming to be "dev".
+          grep -q "id=\"ver\" title=\"commit $SHA\">$VERSION<" _site/index.html
+          echo "Deploying $VERSION ($SHA)" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - uses: actions/deploy-pages@v5

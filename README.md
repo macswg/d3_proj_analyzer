@@ -111,6 +111,14 @@ build fields to show as changed.
   and the showfile census, are sorted alphabetically. The diff tool matches both
   by name, so this doesn't show up as a change.
 
+## Deploying the page
+
+Every push to `main` deploys the page through `.github/workflows/pages.yml`. The
+workflow stamps the footer with `v1.0.<commit count>` (the commit hash is in its
+tooltip), so the version rises by one per commit without a bump. Only the
+deployed copy is stamped: the committed `index.html` says `dev`, which is what a
+local copy shows.
+
 ## Files
 
 - `index.html`: the browser page.
@@ -118,6 +126,7 @@ build fields to show as changed.
   Node with `require('./d3extract.js')`.
 - `d3_extract.py`: the command-line extractor. It and `d3extract.js` are ports of
   each other, so change both together.
+- `.github/workflows/pages.yml`: deploys the page and stamps its version.
 - `FORMAT.md`: notes on the `.d3` container and object format the extractor relies on.
 
 Project archives (`*.d3`) and snapshots (`*.json`) are gitignored, because they

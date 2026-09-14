@@ -24,11 +24,20 @@
   code { font-family: var(--mono); font-size: 12px; }
 
   header { padding: 18px 24px; border-bottom: 1px solid var(--edge); }
-  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; letter-spacing: .01em; }
+  h1 {
+    font-size: 16px; font-weight: 600; margin: 0 0 6px; letter-spacing: .01em;
+    display: flex; align-items: center; gap: 9px;
+  }
+  /* The favicon's mark, drawn inline so the tab and the page carry one icon.
+     Cropped to the document without the favicon's backing square, which at
+     this size left the mark too small to read. */
+  .logo { width: 21px; height: 24px; flex: none; }
   .how { margin: 0; font-size: 12.5px; color: var(--dim); max-width: 78ch; }
   .how b { color: var(--fg); font-weight: 600; }
 
-  main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; max-width: 980px; width: 100%; }
+  /* align-content: start, or the grid stretches its rows to fill a tall window
+     and the drop zone balloons before a project is loaded. */
+  main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; align-content: start; max-width: 980px; width: 100%; }
 
   .drop {
     border: 1px dashed var(--edge); border-radius: 8px; padding: 8px 20px 7px; line-height: 1.35;
@@ -99,13 +108,24 @@
   ul.notes li { margin: 3px 0; }
   ul.notes b { color: var(--fg); font-weight: 500; }
 
-  footer { padding: 14px 24px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--dim); }
+  footer {
+    padding: 14px 24px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--dim);
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+  }
   footer a { color: var(--dim); }
+  footer .who { margin-left: auto; }
+  #ver { font-family: var(--mono); font-size: 11.5px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>disguise project snapshot extractor</h1>
+  <h1>
+    <svg class="logo" viewBox="6.5 4.5 20 23" aria-hidden="true">
+      <path d="M9 7h10l5 5v13H9z" fill="none" stroke="#d7a45f" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M13 18h7M13 22h5" stroke="#6fd08c" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    disguise project snapshot extractor
+  </h1>
   <p class="how">
     Drop a Designer <b>.d3 project archive</b> to get the same snapshot JSON the
     susan_summary plugin captures: transports, setlists, tracks, layers, cues, media
@@ -175,10 +195,16 @@
 </main>
 
 <footer>
-  Related: <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
-  (compare snapshots) ·
-  <a href="https://github.com/macswg/d3plg_susan_summary" target="_blank" rel="noopener">susan_summary plugin</a>
-  (capture from a running Designer)
+  <!-- .github/workflows/pages.yml replaces this span on every push to main with
+       v1.0.<commit count> and the commit hash. "dev" is what a local copy shows. -->
+  <span id="ver" title="local copy, not deployed">dev</span>
+  <span>
+    Related: <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
+    (compare snapshots) ·
+    <a href="https://github.com/macswg/d3plg_susan_summary" target="_blank" rel="noopener">susan_summary plugin</a>
+    (capture from a running Designer)
+  </span>
+  <span class="who">Sean Green</span>
 </footer>
 
 <script src="d3extract.js"></script>
