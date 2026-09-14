@@ -10,8 +10,8 @@ diffs cleanly against captures taken with the plugin.
 
 There are two ways to run it. Both produce byte-identical JSON:
 
-- **In the browser:** open `index.html` and drop a `.d3` on it. The archive is
-  read in the tab and never uploaded.
+- **In the browser:** open **https://macswg.github.io/d3_proj_analyzer/** and drop
+  a `.d3` on it. The archive is read in the tab and never uploaded.
 - **From the command line:** `python3 d3_extract.py project.d3`.
 
 Related: [d3_snapshot_diff](https://macswg.github.io/d3_snapshot_diff/) compares
@@ -20,8 +20,8 @@ captures them from a running Designer.
 
 ## In the browser
 
-1. Open the page (`index.html`). It works from GitHub Pages or straight from a
-   local checkout, and needs no server or build step.
+1. Open https://macswg.github.io/d3_proj_analyzer/. `index.html` also works
+   opened straight from a local checkout, with no server or build step.
 2. Drop a `.d3` project onto it, or click to choose one.
 3. Check the project name. The archive doesn't store one, so it defaults to the
    file name. Change it to the name Designer shows if you'll diff against plugin
