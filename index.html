@@ -31,28 +31,25 @@
   main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; max-width: 980px; width: 100%; }
 
   .drop {
-    position: relative; overflow: hidden;
-    border: 1px dashed var(--edge); border-radius: 8px; padding: 15px 90px 15px 20px;
-    background: var(--panel); color: var(--dim); cursor: pointer;
+    border: 1px dashed var(--edge); border-radius: 8px; padding: 14px 20px;
+    background: var(--panel); color: var(--dim); text-align: center; cursor: pointer;
     transition: border-color .12s, color .12s;
   }
   .drop:hover, .drop:focus-visible { border-color: var(--dim); color: var(--fg); outline: none; }
   .drop.over { border-color: var(--add-fg); color: var(--add-fg); }
-  .drop .big, .drop .small { position: relative; }
   .drop .big { font-size: 14px; color: var(--fg); font-weight: 500; }
   .drop .small { font-size: 12px; margin-top: 2px; }
   .drop.filled { border-style: solid; }
-  /* A watermark at the right rather than behind the text: centred under a
-     two-line label it crossed the words and read as a rendering glitch. An
-     inline SVG with currentColor, not a background-image, so it follows the
-     hover and drag-over colours without a second copy of the artwork. */
+  /* Centred above the label, not behind it: layered under a two-line label it
+     crossed the words and read as a rendering glitch. An inline SVG with
+     currentColor, not a background-image, so it follows the hover and
+     drag-over colours without a second copy of the artwork. */
   .drop-icon {
-    position: absolute; top: 50%; right: 22px; width: 50px; height: 50px;
-    transform: translateY(-50%); opacity: .18; pointer-events: none;
-    transition: opacity .12s;
+    display: block; width: 30px; height: 30px; margin: 0 auto 6px;
+    opacity: .35; pointer-events: none; transition: opacity .12s;
   }
-  .drop:hover .drop-icon, .drop:focus-visible .drop-icon { opacity: .3; }
-  .drop.over .drop-icon { opacity: .6; }
+  .drop:hover .drop-icon, .drop:focus-visible .drop-icon { opacity: .6; }
+  .drop.over .drop-icon { opacity: 1; }
   input[type=file] { display: none; }
 
   .status { font-size: 13px; color: var(--dim); min-height: 20px; }
