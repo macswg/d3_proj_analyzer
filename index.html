@@ -40,21 +40,31 @@
   main { flex: 1; padding: 22px 24px 60px; display: grid; gap: 18px; align-content: start; max-width: 980px; width: 100%; }
 
   .drop {
-    border: 1px dashed var(--edge); border-radius: 8px; padding: 8px 20px 7px; line-height: 1.35;
+    border: 1px dashed var(--edge); border-radius: 8px; padding: 6px 20px; line-height: 1.3;
     background: var(--panel); color: var(--dim); text-align: center; cursor: pointer;
     transition: border-color .12s, color .12s;
   }
   .drop:hover, .drop:focus-visible { border-color: var(--dim); color: var(--fg); outline: none; }
   .drop.over { border-color: var(--add-fg); color: var(--add-fg); }
+  /* Label and note share one line (wrapping on narrow screens), so the box
+     can carry a larger icon and still be shorter than two stacked lines. */
+  .drop .big, .drop .small { display: inline; }
   .drop .big { font-size: 14px; color: var(--fg); font-weight: 500; }
-  .drop .small { font-size: 12px; margin-top: 1px; }
+  .drop .small { font-size: 12px; }
+  .drop .small::before { content: "\00b7"; display: inline-block; margin: 0 7px 0 3px; }
+  /* On a narrow screen the note wraps anyway; give it its own line rather
+     than start a line with the separator. */
+  @media (max-width: 640px) {
+    .drop .small { display: block; }
+    .drop .small::before { content: none; }
+  }
   .drop.filled { border-style: solid; }
   /* Centred below the label, not behind it: layered under a two-line label it
      crossed the words and read as a rendering glitch. An inline SVG with
      currentColor, not a background-image, so it follows the hover and
      drag-over colours without a second copy of the artwork. */
   .drop-icon {
-    display: block; width: 22px; height: 22px; margin: 4px auto 0;
+    display: block; width: 36px; height: 36px; margin: 3px auto 0;
     opacity: .5; pointer-events: none; transition: opacity .12s;
   }
   .drop:hover .drop-icon, .drop:focus-visible .drop-icon { opacity: .75; }
@@ -140,7 +150,7 @@
   <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose a .d3 project archive">
     <div class="big">Drop a .d3 project here, or click to choose one</div>
     <div class="small">Archives of any size are read locally; nothing is sent anywhere.</div>
-    <svg class="drop-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"
+    <svg class="drop-icon" viewBox="4.5 4.5 39 39" fill="none" stroke="currentColor" stroke-width="2.6"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M24 6v22"/>
       <path d="M15 19l9 9 9-9"/>
