@@ -80,7 +80,7 @@ FieldSequence v17: cstr fieldName, cstr valueType, <Float|Resource|String>Sequen
     Resource: cstr keyClass, u32 u32 f64 t, u8 interpolation, u8 u8, cstr path
     String:   u32 u32 f64 t, u8 interpolation, u8 u8, cstr value
   cstr owningModule, (`null` | Expression object), (`null` | Expression object),
-  u8, default value (f32 or cstr), cstr uiCategory
+  u8, default value (f32 or cstr), cstr label
 Expression v3: cstr text, u32, u8
 ```
 
@@ -92,9 +92,17 @@ Expression v3: cstr text, u32, u8
   - 1 = smooth (34 keys, on brightness and Notch time).
 - The first Expression slot holds the expression that drives the parameter.
 - A layer can carry two fields with the same name, so fields are a list, not a map.
-- Notch exposed parameters are named `Value::Attributes::<GUID>`, and
-  `internal/metafield/notchmodule/value::attributes::<guid>.apx` holds only their
-  range and step. The readable name isn't in either place.
+- `label` is the display name. It's empty on most built-in parameters. On a Notch
+  layer, the field name is `<Kind>::Attributes::<node GUID>[_suffix]` and
+  `label` is the exposed parameter's name as last read from the block (`IMAG_FADE`,
+  `COL_000 r`, `IMAG_IN__A Texture`).
+- The same attribute id has the same label on every Notch layer, even across
+  different blocks, so the ids are stable node ids.
+- RenderStream layers carry the same ids with empty labels.
+- A NotchModuleConfig names its block, `objects/notchfile/<block>.dfxdll`. The
+  `.dfxdll` isn't packed into a `.d3`: `internal/notchfile/<block>.dfxdll.apx` is
+  an 87-byte stub, and `internal/metafield/notchmodule/...` holds only range and
+  step.
 
 ### Cue (`internal/cue/uid_*.apx`)
 

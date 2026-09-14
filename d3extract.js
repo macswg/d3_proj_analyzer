@@ -21,7 +21,7 @@
   var FPS_BY_CLOCK = { 0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0 };
   var TAG_NAMES = { 0: 'tc', 1: 'cue', 2: 'midi' };
   var TAG_TC = 0;
-  var KEYFRAMES_FORMAT_VERSION = 1;
+  var KEYFRAMES_FORMAT_VERSION = 2;
   // Inferred, not confirmed in Designer -- see INTERPOLATION in d3_extract.py.
   var INTERPOLATION = { 0: 'step', 1: 'smooth', 2: 'linear' };
   var OBJECT_MAGIC = [0x72, 0x19, 0x04, 0x07];
@@ -251,8 +251,9 @@
     readOptionalObject(r);
     r.skip(1);
     var def = cls === 'FloatSequence' ? r.f32() : r.cstr();
-    r.cstr();
-    return { cls: cls, keys: keys, expression: expression, default: def };
+    // Display label: on a Notch layer, the exposed parameter's name.
+    var label = r.cstr();
+    return { cls: cls, keys: keys, expression: expression, default: def, label: label };
   }
 
   function readFieldSequence(r) {
@@ -266,11 +267,14 @@
     return field;
   }
 
+  /* Returns the resource paths the config names (a Notch layer's block). */
   function skipModuleConfig(r) {
-    if (r.peekCstr() === 'null') { r.cstr(); return; }
+    if (r.peekCstr() === 'null') { r.cstr(); return []; }
     var j = indexOfBytes(r.b, FIELD_SEQUENCE_UID, r.i);
     if (j < 0) r.fail('no field sequences after module config');
+    var paths = cstrings(r.b.subarray(r.i, j - 4)).filter(function (x) { return x.startsWith('objects/'); });
     r.i = j - 4;
+    return paths;
   }
 
   function readLayer(r, groupPath, out) {
@@ -295,7 +299,7 @@
     r.skip(8);
     for (var nb = r.u32(); nb > 0; nb--) { r.cstr(); r.skip(4); }
     var module = r.cstr();
-    skipModuleConfig(r);
+    var configPaths = skipModuleConfig(r);
     var fields = [];
     for (var nf = r.u32(); nf > 0; nf--) fields.push(readFieldSequence(r));
     r.skip(1);
@@ -313,7 +317,8 @@
 
     out.push({
       name: name, uid: uid, type: module || 'Layer', groupPath: groupPath.slice(),
-      renderEnable: renderEnable, tStart: tStart, tEnd: tStart + duration, fields: fields
+      renderEnable: renderEnable, tStart: tStart, tEnd: tStart + duration, fields: fields,
+      notchBlock: configPaths.find(function (x) { return x.startsWith('objects/notchfile/'); }) || null
     });
   }
 
@@ -839,17 +844,40 @@
     var census = archive.names(TRACK_ROOT + '/').filter(function (p) {
       return p.endsWith('.apx') && p.split('/').length === 3;
     }).sort(pyCompare);
+    var parsed = census.map(function (path) { return [path, parseTrack(archive.read(path), path)]; });
+
+    // Show-wide names for exposed attributes, borrowed by a layer that carries
+    // the id without a name (RenderStream) only when every named occurrence
+    // agrees. See build_keyframes in d3_extract.py.
+    var names = new Map();
+    parsed.forEach(function (entry) {
+      entry[1].layers.forEach(function (layer) {
+        layer.fields.forEach(function (field) {
+          if (!field.label || field.name.indexOf('::Attributes::') < 0) return;
+          if (!names.has(field.name)) names.set(field.name, new Set());
+          names.get(field.name).add(field.label);
+        });
+      });
+    });
+
     var tracks = [];
-    census.forEach(function (path) {
-      var track = parseTrack(archive.read(path), path);
+    parsed.forEach(function (entry) {
+      var path = entry[0], track = entry[1];
       var layers = [];
       track.layers.forEach(function (layer) {
         var fields = [];
         layer.fields.forEach(function (field) {
           if (field.keys.length < 2 && !field.expression) return;
           var cls = field.cls;
+          var label = field.label || null, source = field.label ? 'layer' : null;
+          if (label === null && names.has(field.name) && names.get(field.name).size === 1) {
+            label = names.get(field.name).values().next().value;
+            source = 'show';
+          }
           fields.push({
             name: field.name,
+            label: label,
+            labelSource: source,
             valueType: field.valueType,
             expression: field.expression,
             default: keyframeValue(cls, field.default),
@@ -872,6 +900,7 @@
           groupPath: layer.groupPath,
           tStart: num(layer.tStart),
           tEnd: num(layer.tEnd),
+          notchBlock: layer.notchBlock,
           fields: fields
         });
         doc.fieldCount += fields.length;

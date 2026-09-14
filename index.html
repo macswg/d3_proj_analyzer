@@ -46,18 +46,8 @@
   }
   .drop:hover, .drop:focus-visible { border-color: var(--dim); color: var(--fg); outline: none; }
   .drop.over { border-color: var(--add-fg); color: var(--add-fg); }
-  /* Label and note share one line (wrapping on narrow screens), so the box
-     can carry a larger icon and still be shorter than two stacked lines. */
-  .drop .big, .drop .small { display: inline; }
-  .drop .big { font-size: 14px; color: var(--fg); font-weight: 500; }
-  .drop .small { font-size: 12px; }
-  .drop .small::before { content: "\00b7"; display: inline-block; margin: 0 7px 0 3px; }
-  /* On a narrow screen the note wraps anyway; give it its own line rather
-     than start a line with the separator. */
-  @media (max-width: 640px) {
-    .drop .small { display: block; }
-    .drop .small::before { content: none; }
-  }
+  .drop .big { display: block; font-size: 14px; color: var(--fg); font-weight: 500; }
+  .drop .small { display: block; font-size: 12px; }
   .drop.filled { border-style: solid; }
   /* Centred below the label, not behind it: layered under a two-line label it
      crossed the words and read as a rendering glitch. An inline SVG with
@@ -188,7 +178,7 @@
       Next: open <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
       and load the snapshot next to another snapshot (from this page or from the plugin).
       The keyframes file is separate: every animated layer parameter in the show (two or more
-      keys, or an expression), with times, values and interpolation. The diff tool doesn't
+      keys, or an expression), with times, values, interpolation and Notch parameter names. The diff tool doesn't
       read it, and the interpolation names are inferred rather than confirmed in Designer.
     </p>
   </section>

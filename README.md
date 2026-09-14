@@ -85,7 +85,7 @@ tool doesn't read this file.
 
 ```json
 {
-  "format": "d3_keyframes", "formatVersion": 1,
+  "format": "d3_keyframes", "formatVersion": 2,
   "project": "my_show", "capturedAt": "2026-09-13T15:38:31-07:00",
   "trackCount": 69, "layerCount": 872, "fieldCount": 1625, "keyCount": 4499,
   "tracks": [{
@@ -93,9 +93,10 @@ tool doesn't read this file.
     "layers": [{
       "id": "#10313707525644097714", "uid": 10313707525644097714,
       "name": "[VID] intro_loop", "type": "VariableVideoModule",
-      "groupPath": [], "tStart": 60.06, "tEnd": 94.628,
+      "groupPath": [], "tStart": 60.06, "tEnd": 94.628, "notchBlock": null,
       "fields": [{
-        "name": "brightness", "valueType": "float", "default": 1.0, "expression": null,
+        "name": "brightness", "label": null, "labelSource": null,
+        "valueType": "float", "default": 1.0, "expression": null,
         "keys": [
           {"t": 61.060547, "value": 0.0, "interpolation": "linear"},
           {"t": 61.194336, "value": 0.998, "interpolation": "linear"}
@@ -121,8 +122,25 @@ tool doesn't read this file.
   nearly every numeric key and as step on whole-number, clip and string keys, and
   the third appears on only a few keys. Setting known interpolations on a few
   keys in a test project would confirm them.
-- **Notch parameters** appear under their exposed-attribute ids
-  (`Value::Attributes::<GUID>`). The readable names aren't recovered yet.
+- **Notch parameters** are named by attribute id
+  (`Value::Attributes::<GUID>`). **`label`** gives the name exposed by the Notch
+  block (`IMAG_FADE`, `CUE_TIME__A`, `COL_000 r`), as Designer last read it from
+  that block. The names follow the block, so re-exporting after the block
+  changes picks up renamed or new parameters. `labelSource` says where the name
+  came from:
+  - `"layer"`: stored on this layer. Notch layers store every exposed name.
+  - `"show"`: borrowed. RenderStream layers carry the same attribute ids with no
+    names, because their parameter list comes live from the render node. They
+    take the name from another layer with that id, but only when every named
+    occurrence agrees.
+  - `null`: no name anywhere in the project. This happens for a RenderStream
+    parameter no Notch layer shares.
+
+  Built-in parameters (`brightness`, `scale.x`) have readable names already, so
+  their `label` is usually null. **`notchBlock`** on a layer is the Notch block
+  file it uses (e.g. `objects/notchfile/show_master.dfxdll`). The block itself
+  isn't packed into a `.d3`, so its full parameter list isn't available, only
+  the names the layers store.
 
 ## What's in the snapshot
 

@@ -41,7 +41,7 @@ DIRECTOR_STATE = "internal/localstate/_directorstate_.apx"
 _FPS_BY_CLOCK = {0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0}
 _TAG_NAMES = {0: "tc", 1: "cue", 2: "midi"}
 
-KEYFRAMES_FORMAT_VERSION = 1
+KEYFRAMES_FORMAT_VERSION = 2
 # Keyframe interpolation codes. Inferred, not confirmed in Designer: 2 is on
 # nearly every float key, 0 on nearly every whole-number, clip and string key
 # (which can only hold, not blend), and 1 on a handful of brightness and Notch
@@ -266,8 +266,13 @@ def _read_sequence(r):
         default = r.f32()
     else:
         default = r.cstr()
-    r.cstr()                  # UI category
-    return {"cls": cls, "keys": keys, "expression": expression, "default": default}
+    # Display label. Empty on most built-in parameters; on a Notch layer it is
+    # the exposed parameter's name as Designer last read it from the block
+    # (IMAG_FADE, CUE_TIME__A, "COL_000 r"), since the field name itself is only
+    # the block's attribute id.
+    label = r.cstr()
+    return {"cls": cls, "keys": keys, "expression": expression, "default": default,
+            "label": label}
 
 
 def _read_field_sequence(r):
@@ -284,14 +289,18 @@ def _read_field_sequence(r):
 def _skip_module_config(r):
     """`null`, or a per-module *ModuleConfig resource. Those vary freely between
     module types and nothing in the snapshot needs them, so resync on the field
-    sequence list that always follows: `u32 count` + `FieldSequence_UID_`."""
+    sequence list that always follows: `u32 count` + `FieldSequence_UID_`.
+    Returns the resource paths the config names (a Notch layer's block file),
+    read as plain strings rather than by layout for the same reason."""
     if r.peek_cstr() == "null":
         r.cstr()
-        return
+        return []
     j = r.b.find(b"FieldSequence_UID_", r.i)
     if j < 0:
         r.fail("no field sequences after module config")
+    paths = [s for s in _cstrings(r.b[r.i:j - 4]) if s.startswith("objects/")]
     r.i = j - 4
+    return paths
 
 
 def _read_layer(r, group_path, out):
@@ -319,7 +328,7 @@ def _read_layer(r, group_path, out):
         r.cstr()
         r.skip(4)
     module = r.cstr()
-    _skip_module_config(r)
+    config_paths = _skip_module_config(r)
     fields = [_read_field_sequence(r) for _ in range(r.u32())]
     r.skip(1)
     if r.peek_cstr() == "null":
@@ -343,6 +352,7 @@ def _read_layer(r, group_path, out):
         "tStart": t_start,
         "tEnd": t_start + duration,
         "fields": fields,
+        "notchBlock": next((p for p in config_paths if p.startswith("objects/notchfile/")), None),
     })
 
 
@@ -802,9 +812,23 @@ def build_keyframes(archive_path, project=None, captured_at=None):
     }
     census = sorted(p for p in archive.names(TRACK_ROOT + "/") if p.endswith(".apx")
                     and p.count("/") == 2)
+    parsed = [(path, parse_track(archive.read(path), path)) for path in census]
+
+    # Show-wide names for exposed attributes. A Notch layer stores each exposed
+    # parameter's name beside its attribute id; a RenderStream layer carries the
+    # same ids with no name, since its parameter list comes live from the render
+    # node. The ids are node ids from the Notch project and read the same on
+    # every layer that has a name, so a nameless one borrows it -- but only
+    # when every named occurrence agrees, and marked as borrowed.
+    names = {}
+    for _, track in parsed:
+        for layer in track["layers"]:
+            for field in layer["fields"]:
+                if field["label"] and "::Attributes::" in field["name"]:
+                    names.setdefault(field["name"], set()).add(field["label"])
+
     tracks = []
-    for path in census:
-        track = parse_track(archive.read(path), path)
+    for path, track in parsed:
         layers = []
         for layer in track["layers"]:
             fields = []
@@ -812,8 +836,13 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                 if len(field["keys"]) < 2 and not field["expression"]:
                     continue
                 cls = field["cls"]
+                label, source = field["label"] or None, "layer" if field["label"] else None
+                if label is None and len(names.get(field["name"], ())) == 1:
+                    label, source = next(iter(names[field["name"]])), "show"
                 fields.append({
                     "name": field["name"],
+                    "label": label,
+                    "labelSource": source,
                     "valueType": field["valueType"],
                     "expression": field["expression"],
                     "default": _keyframe_value(cls, field["default"]),
@@ -833,6 +862,7 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                 "groupPath": layer["groupPath"],
                 "tStart": _num(layer["tStart"]),
                 "tEnd": _num(layer["tEnd"]),
+                "notchBlock": layer["notchBlock"],
                 "fields": fields,
             })
             doc["fieldCount"] += len(fields)
