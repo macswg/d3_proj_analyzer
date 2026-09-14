@@ -28,7 +28,7 @@ import os
 import re
 import struct
 import sys
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Context, Decimal, ROUND_HALF_UP
 
 SCHEMA_VERSION = 7
 AUTOMATIC_SETLIST_PATH = "objects/setlist/automatic.apx"
@@ -40,6 +40,14 @@ DIRECTOR_STATE = "internal/localstate/_directorstate_.apx"
 # back as 29.969999313354492.
 _FPS_BY_CLOCK = {0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0}
 _TAG_NAMES = {0: "tc", 1: "cue", 2: "midi"}
+
+KEYFRAMES_FORMAT_VERSION = 1
+# Keyframe interpolation codes. Inferred, not confirmed in Designer: 2 is on
+# nearly every float key, 0 on nearly every whole-number, clip and string key
+# (which can only hold, not blend), and 1 on a handful of brightness and Notch
+# time keys. The plugin's director probe found keys exposing linear, cubic and
+# select, which fits linear / smooth / step.
+INTERPOLATION = {0: "step", 1: "smooth", 2: "linear"}
 TAG_TC = 0
 
 
@@ -228,6 +236,8 @@ def _read_optional_object(r):
 
 
 def _read_sequence(r):
+    """A keyframe track. Keys are (time in track seconds, value, interpolation
+    code); see INTERPOLATION for what the codes appear to mean."""
     cls, _ = r.object_head()
     r.section("KeyContainer")
     r.section("KeySequence")
@@ -242,30 +252,33 @@ def _read_sequence(r):
             r.fail("unsupported sequence {0}".format(cls))
         r.skip(4 + 4)
         t = r.f64()
-        r.skip(3)             # interpolation bytes
+        interp = r.u8()
+        r.skip(2)
         if cls == "FloatSequence":
-            keys.append((t, r.f32()))
+            keys.append((t, r.f32(), interp))
         else:
-            keys.append((t, r.cstr()))
+            keys.append((t, r.cstr(), interp))
     r.cstr()                  # owning module name
-    _read_optional_object(r)
+    expression = _read_optional_object(r)
     _read_optional_object(r)
     r.skip(1)
     if cls == "FloatSequence":
-        r.f32()
+        default = r.f32()
     else:
-        r.cstr()              # default value
+        default = r.cstr()
     r.cstr()                  # UI category
-    return cls, keys
+    return {"cls": cls, "keys": keys, "expression": expression, "default": default}
 
 
 def _read_field_sequence(r):
     r.object_head("FieldSequence")
     r.section("FieldSequence")
     name = r.cstr()
-    r.cstr()                  # value type, e.g. float / VideoClip::RP
-    cls, keys = _read_sequence(r)
-    return name, cls, keys
+    value_type = r.cstr()     # e.g. float / VideoClip::RP
+    field = _read_sequence(r)
+    field["name"] = name
+    field["valueType"] = value_type
+    return field
 
 
 def _skip_module_config(r):
@@ -307,10 +320,7 @@ def _read_layer(r, group_path, out):
         r.skip(4)
     module = r.cstr()
     _skip_module_config(r)
-    fields = {}
-    for _ in range(r.u32()):
-        fname, fcls, keys = _read_field_sequence(r)
-        fields[fname] = (fcls, keys)
+    fields = [_read_field_sequence(r) for _ in range(r.u32())]
     r.skip(1)
     if r.peek_cstr() == "null":
         r.cstr()
@@ -663,11 +673,13 @@ class TrackBuilder(object):
         return base
 
     def _layer_media(self, layer):
-        field = layer["fields"].get("video")
-        if not field or field[0] != "ResourceSequence":
+        # The last `video` field, as when fields were keyed by name.
+        videos = [f for f in layer["fields"] if f["name"] == "video"]
+        field = videos[-1] if videos else None
+        if not field or field["cls"] != "ResourceSequence":
             return []
         out, seen = [], set()
-        for _, ref in field[1]:
+        for _, ref, _ in field["keys"]:
             if not ref or ref == "null" or ref in seen:
                 continue
             seen.add(ref)
@@ -739,6 +751,104 @@ def _build_info(archive, debug):
         build["error"] = "unrecognised depends.txt: " + line
     debug.append("system.build from conf/depends.txt; release flags are not in the archive")
     return build
+
+
+def _f32_value(value):
+    """A float32 as the shortest decimal that reads back to the same float32, so
+    a keyframe stored as 0.998f exports as 0.998, not 0.9980000257492065."""
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    # Decimal rounding with ties away from zero, not "%g": %g breaks ties to
+    # even and JavaScript's toPrecision breaks them away from zero, so on a
+    # value like 194529.125 the two picked different (equally valid) digits
+    # and the browser's export stopped matching this one.
+    target = struct.pack("<f", value)
+    exact = Decimal(value)
+    for precision in range(1, 10):
+        candidate = float(Context(prec=precision, rounding=ROUND_HALF_UP).plus(exact))
+        if struct.pack("<f", candidate) == target:
+            return candidate
+    return float(value)
+
+
+def _keyframe_value(cls, value):
+    if cls == "FloatSequence":
+        return _f32_value(value)
+    if value in (None, "", "null"):
+        return None
+    return value[:-4] if (cls == "ResourceSequence" and value.endswith(".apx")) else value
+
+
+def build_keyframes(archive_path, project=None, captured_at=None):
+    """Every animated layer parameter in the show, as a separate document from
+    the snapshot. "Animated" means two or more keys, or driven by an expression:
+    a single key is just the parameter's constant value, and the show holds
+    ~190,000 of those against under a thousand real animations."""
+    archive = Archive(archive_path)
+    doc = {
+        "format": "d3_keyframes",
+        "formatVersion": KEYFRAMES_FORMAT_VERSION,
+        "capturedAt": captured_at or _captured_at(archive_path),
+        "project": project or os.path.splitext(os.path.basename(archive_path))[0],
+        "source": os.path.basename(archive_path),
+        "scope": "animated",
+        "interpolation": {
+            "codes": dict((str(k), v) for k, v in INTERPOLATION.items()),
+            "note": "Inferred from how the codes are used across a real show; not confirmed in Designer.",
+        },
+        "trackCount": 0, "layerCount": 0, "fieldCount": 0, "keyCount": 0,
+        "tracks": [],
+        "writtenTo": None,
+    }
+    census = sorted(p for p in archive.names(TRACK_ROOT + "/") if p.endswith(".apx")
+                    and p.count("/") == 2)
+    tracks = []
+    for path in census:
+        track = parse_track(archive.read(path), path)
+        layers = []
+        for layer in track["layers"]:
+            fields = []
+            for field in layer["fields"]:
+                if len(field["keys"]) < 2 and not field["expression"]:
+                    continue
+                cls = field["cls"]
+                fields.append({
+                    "name": field["name"],
+                    "valueType": field["valueType"],
+                    "expression": field["expression"],
+                    "default": _keyframe_value(cls, field["default"]),
+                    "keys": [{"t": _num(t),
+                              "value": _keyframe_value(cls, value),
+                              "interpolation": INTERPOLATION.get(code, "unknown ({0})".format(code))}
+                             for t, value, code in field["keys"]],
+                })
+            if not fields:
+                continue
+            uid = _uid_int(layer["uid"])
+            layers.append({
+                "id": "#{0}".format(uid) if uid is not None else None,
+                "uid": uid,
+                "name": layer["name"],
+                "type": layer["type"],
+                "groupPath": layer["groupPath"],
+                "tStart": _num(layer["tStart"]),
+                "tEnd": _num(layer["tEnd"]),
+                "fields": fields,
+            })
+            doc["fieldCount"] += len(fields)
+            doc["keyCount"] += sum(len(f["keys"]) for f in fields)
+        if layers:
+            tracks.append({
+                "id": _track_id(_stem(path), path),
+                "name": _stem(path),
+                "path": path,
+                "bpm": _num(track["bpm"]),
+                "layers": layers,
+            })
+            doc["layerCount"] += len(layers)
+    doc["tracks"] = sorted(tracks, key=lambda t: t["id"])
+    doc["trackCount"] = len(tracks)
+    return doc
 
 
 def _captured_at(path):
@@ -830,10 +940,15 @@ def main(argv=None):
     ap.add_argument("-o", "--output", help="output .json (default: <stamp>_<project>.json next to the archive)")
     ap.add_argument("--project", help="project name to record (default: archive file stem)")
     ap.add_argument("--captured-at", help="ISO timestamp to record (default: archive mtime)")
+    ap.add_argument("--keyframes", nargs="?", const="", metavar="PATH",
+                    help="also write every animated layer parameter to a separate JSON "
+                         "(default: <stamp>_<project>_keyframes.json beside the snapshot)")
     args = ap.parse_args(argv)
 
     try:
         snapshot = build_snapshot(args.archive, args.project, args.captured_at)
+        keyframes = (build_keyframes(args.archive, args.project, args.captured_at)
+                     if args.keyframes is not None else None)
     except (ParseError, ValueError) as error:
         print("error: {0}".format(error), file=sys.stderr)
         return 1
@@ -849,6 +964,15 @@ def main(argv=None):
     print("wrote {0}: {1} transports, {2} tracks, {3} layers".format(
         out, snapshot["transportCount"], snapshot["trackCount"],
         sum(t["layerCount"] for t in snapshot["tracks"])))
+
+    if keyframes is not None:
+        kout = args.keyframes or (os.path.splitext(out)[0] + "_keyframes.json")
+        keyframes["writtenTo"] = os.path.abspath(kout)
+        with open(kout, "w") as fh:
+            fh.write(json.dumps(keyframes, indent=2, sort_keys=True))
+        print("wrote {0}: {1} keys on {2} parameters, {3} layers, {4} tracks".format(
+            kout, keyframes["keyCount"], keyframes["fieldCount"],
+            keyframes["layerCount"], keyframes["trackCount"]))
     return 0
 
 

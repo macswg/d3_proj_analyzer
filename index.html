@@ -82,11 +82,13 @@
     text-transform: uppercase; letter-spacing: .07em;
   }
 
-  .actions { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end; }
+  .actions { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-start; margin-top: 16px; }
+  .actions .field { flex: 1 1 260px; max-width: 350px; }
+  .actions button { width: 100%; }
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .07em; }
   .field input {
-    min-width: 240px; padding: 7px 10px; border: 1px solid var(--edge); border-radius: 6px;
+    max-width: 420px; min-width: 0; padding: 7px 10px; border: 1px solid var(--edge); border-radius: 6px;
     background: var(--bg); color: var(--fg); font: inherit; font-size: 13px;
   }
   .field input:focus { outline: none; border-color: var(--dim); }
@@ -96,6 +98,11 @@
     background: #1c3326; color: var(--add-fg); font: inherit; font-size: 13px; font-weight: 600;
   }
   button.primary:hover { background: #22402f; }
+  button.secondary {
+    padding: 8px 16px; border-radius: 6px; border: 1px solid var(--edge); cursor: pointer;
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; font-weight: 600;
+  }
+  button.secondary:hover { border-color: var(--dim); }
   .fname { font-family: var(--mono); font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
   .next { font-size: 12.5px; color: var(--dim); margin: 12px 0 0; }
 
@@ -161,21 +168,28 @@
   <div id="status" class="status" role="status" aria-live="polite"></div>
 
   <section id="result" class="panel" hidden>
-    <h2>Snapshot</h2>
+    <h2>Export</h2>
+    <div class="field">
+      <label for="project">Project name</label>
+      <input id="project" spellcheck="false">
+      <span class="hint">The archive doesn't store one. Use the name Designer shows to match plugin captures.</span>
+    </div>
     <div class="actions">
-      <div class="field">
-        <label for="project">Project name</label>
-        <input id="project" spellcheck="false">
-        <span class="hint">The archive doesn't store one. Use the name Designer shows to match plugin captures.</span>
-      </div>
       <div class="field">
         <button id="download" class="primary" type="button">Download snapshot JSON</button>
         <span id="fname" class="fname"></span>
       </div>
+      <div class="field">
+        <button id="downloadKeys" class="secondary" type="button">Download keyframes JSON</button>
+        <span id="kname" class="fname"></span>
+      </div>
     </div>
     <p class="next">
       Next: open <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
-      and load this file next to another snapshot (from this page or from the plugin).
+      and load the snapshot next to another snapshot (from this page or from the plugin).
+      The keyframes file is separate: every animated layer parameter in the show (two or more
+      keys, or an expression), with times, values and interpolation. The diff tool doesn't
+      read it, and the interpolation names are inferred rather than confirmed in Designer.
     </p>
   </section>
 
@@ -241,9 +255,18 @@
     return String(project).replace(/[^A-Za-z0-9_-]/g, '_');
   }
 
-  function outputName() {
+  function outputName(suffix) {
     var s = current.snapshot;
-    return s.capturedAt.slice(0, 19).replace('T', '_').replace(/:/g, '-') + '_' + safeName(s.project) + '.json';
+    return s.capturedAt.slice(0, 19).replace('T', '_').replace(/:/g, '-') + '_' + safeName(s.project) +
+           (suffix || '') + '.json';
+  }
+
+  function setProject() {
+    var project = $('project').value.trim() || current.fileName.replace(/\.[^.]*$/, '');
+    current.snapshot.project = project;
+    current.keyframes.project = project;
+    $('fname').textContent = outputName();
+    $('kname').textContent = outputName('_keyframes');
   }
 
   function formatBytes(n) {
@@ -263,11 +286,15 @@
       // Let the status paint before the (synchronous) parse runs.
       return new Promise(function (resolve) { setTimeout(resolve, 20); }).then(function () {
         var started = performance.now();
-        var snapshot = D3Extract.buildSnapshot(buffer, {
+        var options = {
           fileName: file.name,
           capturedAt: D3Extract.localIso(new Date(file.lastModified || Date.now()))
-        });
-        current = { snapshot: snapshot, fileName: file.name };
+        };
+        current = {
+          snapshot: D3Extract.buildSnapshot(buffer, options),
+          keyframes: D3Extract.buildKeyframes(buffer, options),
+          fileName: file.name
+        };
         render(((performance.now() - started) / 1000).toFixed(1));
       });
     }).catch(function (error) {
@@ -289,13 +316,15 @@
       t.layers.forEach(function (l) { media += l.media.length; });
     });
 
+    var k = current.keyframes;
     $('project').value = s.project;
-    $('fname').textContent = outputName();
+    setProject();
 
     var stats = $('stats');
     stats.textContent = '';
     [[s.transportCount, 'transports'], [s.trackCount, 'tracks in setlists'],
-     [s.showfile.trackCount, 'tracks in show'], [layers, 'layers'], [cues, 'cues'], [media, 'media refs']]
+     [s.showfile.trackCount, 'tracks in show'], [layers, 'layers'], [cues, 'cues'], [media, 'media refs'],
+     [k.fieldCount, 'animated parameters'], [k.keyCount, 'keyframes']]
       .forEach(function (pair) {
         var box = el('div', { class: 'stat' });
         box.appendChild(el('div', { class: 'n' }, pair[0].toLocaleString()));
@@ -340,13 +369,11 @@
     setStatus('Done in ' + seconds + ' s.', 'ok');
   }
 
-  function download() {
+  function download(doc, name) {
     if (!current) return;
-    var s = current.snapshot;
-    s.project = $('project').value.trim() || current.fileName.replace(/\.[^.]*$/, '');
-    var name = outputName();
-    s.writtenTo = name;
-    var blob = new Blob([D3Extract.toJson(s)], { type: 'application/json' });
+    setProject();
+    doc.writtenTo = name;
+    var blob = new Blob([D3Extract.toJson(doc)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = el('a', { href: url, download: name });
     document.body.appendChild(a);
@@ -373,12 +400,13 @@
     var file = e.dataTransfer && e.dataTransfer.files[0];
     if (file) handle(file);
   });
-  $('project').addEventListener('input', function () {
-    if (!current) return;
-    current.snapshot.project = $('project').value.trim() || current.fileName.replace(/\.[^.]*$/, '');
-    $('fname').textContent = outputName();
+  $('project').addEventListener('input', function () { if (current) setProject(); });
+  $('download').addEventListener('click', function () {
+    if (current) download(current.snapshot, outputName());
   });
-  $('download').addEventListener('click', download);
+  $('downloadKeys').addEventListener('click', function () {
+    if (current) download(current.keyframes, outputName('_keyframes'));
+  });
 })();
 </script>
 </body>

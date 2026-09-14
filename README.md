@@ -28,9 +28,12 @@ captures them from a running Designer.
    captures.
 4. Click **Download snapshot JSON**, then load the file into
    [d3_snapshot_diff](https://macswg.github.io/d3_snapshot_diff/).
+5. Optionally, click **Download keyframes JSON** for the show's layer animation
+   (see [Keyframes](#keyframes)).
 
 The page also summarises the snapshot: transports and their setlists, and the
-number of tracks, layers, cues and media references. A 148 MB archive takes
+number of tracks, layers, cues, media references, animated parameters and
+keyframes. A 148 MB archive takes
 under a second in Chrome.
 
 ## From the command line
@@ -55,6 +58,7 @@ wrote path/to/2026-09-13_15-38-31_project.json: 6 transports, 72 tracks, 2270 la
 | `-o`, `--output PATH` | `<timestamp>_<project>.json` next to the archive | Where to write the snapshot. |
 | `--project NAME` | the archive's file name, without `.d3` | Project name to record. The archive doesn't store one, so pass the name Designer shows if you'll diff against plugin captures. |
 | `--captured-at ISO` | the archive's modification time | Timestamp to record, e.g. `2026-09-13T15:36:30-07:00`. |
+| `--keyframes [PATH]` | off; with no path, `<snapshot name>_keyframes.json` | Also write the keyframes file (see [Keyframes](#keyframes)). |
 
 Example:
 
@@ -69,6 +73,56 @@ error names the resource and byte offset where parsing stopped.
 
 Open https://macswg.github.io/d3_snapshot_diff/ and load two snapshots. Any mix
 works: two archives, two plugin captures, or one of each.
+
+## Keyframes
+
+The keyframes file is a separate JSON document (`"format": "d3_keyframes"`)
+holding every **animated** layer parameter in the show: a parameter with two or
+more keys, or one driven by an expression. A single key is just the parameter's
+constant value, and a show holds tens of thousands of those, so they're left
+out. It covers every track in the show, not just the ones in a setlist. The diff
+tool doesn't read this file.
+
+```json
+{
+  "format": "d3_keyframes", "formatVersion": 1,
+  "project": "my_show", "capturedAt": "2026-09-13T15:38:31-07:00",
+  "trackCount": 69, "layerCount": 872, "fieldCount": 1625, "keyCount": 4499,
+  "tracks": [{
+    "id": "430_intro", "name": "430_intro", "path": "objects/track/430_intro.apx", "bpm": 60.0,
+    "layers": [{
+      "id": "#10313707525644097714", "uid": 10313707525644097714,
+      "name": "[VID] intro_loop", "type": "VariableVideoModule",
+      "groupPath": [], "tStart": 60.06, "tEnd": 94.628,
+      "fields": [{
+        "name": "brightness", "valueType": "float", "default": 1.0, "expression": null,
+        "keys": [
+          {"t": 61.060547, "value": 0.0, "interpolation": "linear"},
+          {"t": 61.194336, "value": 0.998, "interpolation": "linear"}
+        ]
+      }]
+    }]
+  }]
+}
+```
+
+- **Ids** match the snapshot: track `id` and layer `id`/`uid` are the same, so a
+  keyframe can be joined to its layer.
+- **`t`** is in track seconds, not relative to the layer. Keys can sit outside
+  the layer's own start and end.
+- **`value`** is a number for numeric parameters, rounded to the shortest decimal
+  that is the same stored value (`0.998`, not `0.9980000257492065`). Clip and
+  resource keys give the resource path, and string keys give the string.
+  Vector parameters are split per component (`scale.x`, `scale.y`).
+- **`expression`** holds the expression text when one drives the parameter
+  (e.g. `1-wildcard10()`).
+- **`interpolation`** is `linear`, `step` or `smooth`. **These names are
+  inferred**, not confirmed in Designer: the stored codes are used as linear on
+  nearly every numeric key and as step on whole-number, clip and string keys, and
+  the third appears on only a few keys. Setting known interpolations on a few
+  keys in a test project would confirm them.
+- **Notch parameters** appear under their exposed-attribute ids
+  (`Value::Attributes::<GUID>`). The readable names aren't recovered yet.
 
 ## What's in the snapshot
 
@@ -121,7 +175,7 @@ local copy shows.
 
 ## Files
 
-- `index.html`: the browser page.
+- `index.html`: the browser page (snapshot and keyframes downloads).
 - `d3extract.js`: the extractor in JavaScript, used by the page. It also loads in
   Node with `require('./d3extract.js')`.
 - `d3_extract.py`: the command-line extractor. It and `d3extract.js` are ports of

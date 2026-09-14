@@ -21,6 +21,9 @@
   var FPS_BY_CLOCK = { 0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0 };
   var TAG_NAMES = { 0: 'tc', 1: 'cue', 2: 'midi' };
   var TAG_TC = 0;
+  var KEYFRAMES_FORMAT_VERSION = 1;
+  // Inferred, not confirmed in Designer -- see INTERPOLATION in d3_extract.py.
+  var INTERPOLATION = { 0: 'step', 1: 'smooth', 2: 'linear' };
   var OBJECT_MAGIC = [0x72, 0x19, 0x04, 0x07];
 
   var utf8 = new TextDecoder('utf-8');
@@ -239,25 +242,28 @@
       else if (cls !== 'FloatSequence' && cls !== 'StringSequence') r.fail('unsupported sequence ' + cls);
       r.skip(8);
       var t = r.f64();
-      r.skip(3);
-      keys.push([t, cls === 'FloatSequence' ? r.f32() : r.cstr()]);
+      var interp = r.u8();
+      r.skip(2);
+      keys.push([t, cls === 'FloatSequence' ? r.f32() : r.cstr(), interp]);
     }
     r.cstr();
-    readOptionalObject(r);
+    var expression = readOptionalObject(r);
     readOptionalObject(r);
     r.skip(1);
-    if (cls === 'FloatSequence') r.f32(); else r.cstr();
+    var def = cls === 'FloatSequence' ? r.f32() : r.cstr();
     r.cstr();
-    return [cls, keys];
+    return { cls: cls, keys: keys, expression: expression, default: def };
   }
 
   function readFieldSequence(r) {
     r.objectHead('FieldSequence');
     r.section('FieldSequence');
     var name = r.cstr();
-    r.cstr();
-    var seq = readSequence(r);
-    return [name, seq[0], seq[1]];
+    var valueType = r.cstr();
+    var field = readSequence(r);
+    field.name = name;
+    field.valueType = valueType;
+    return field;
   }
 
   function skipModuleConfig(r) {
@@ -290,11 +296,8 @@
     for (var nb = r.u32(); nb > 0; nb--) { r.cstr(); r.skip(4); }
     var module = r.cstr();
     skipModuleConfig(r);
-    var fields = {};
-    for (var nf = r.u32(); nf > 0; nf--) {
-      var f = readFieldSequence(r);
-      fields[f[0]] = [f[1], f[2]];
-    }
+    var fields = [];
+    for (var nf = r.u32(); nf > 0; nf--) fields.push(readFieldSequence(r));
     r.skip(1);
     if (r.peekCstr() === 'null') {
       r.cstr();
@@ -607,10 +610,12 @@
   };
 
   TrackBuilder.prototype.layerMedia = function (layer) {
-    var field = layer.fields.video;
-    if (!field || field[0] !== 'ResourceSequence') return [];
+    // The last `video` field, as when fields were keyed by name.
+    var videos = layer.fields.filter(function (f) { return f.name === 'video'; });
+    var field = videos.length ? videos[videos.length - 1] : null;
+    if (!field || field.cls !== 'ResourceSequence') return [];
     var out = [], seen = new Set(), self = this;
-    field[1].forEach(function (key) {
+    field.keys.forEach(function (key) {
       var ref = key[1];
       if (!ref || ref === 'null' || seen.has(ref)) return;
       seen.add(ref);
@@ -788,10 +793,105 @@
     return snapshot;
   }
 
+  // --- keyframes ---------------------------------------------------------------
+
+  /* A float32 as the shortest decimal that reads back to the same float32, so a
+   * key stored as 0.998f exports as 0.998. Same search as _f32_value. */
+  function f32Value(value) {
+    if (!isFinite(value)) return null;
+    var target = Math.fround(value);
+    for (var p = 1; p < 10; p++) {
+      var candidate = parseFloat(value.toPrecision(p));
+      if (Math.fround(candidate) === target) return candidate;
+    }
+    return value;
+  }
+
+  function keyframeValue(cls, value) {
+    if (cls === 'FloatSequence') return f32Value(value);
+    if (value === null || value === undefined || value === '' || value === 'null') return null;
+    return cls === 'ResourceSequence' && value.endsWith('.apx') ? value.slice(0, -4) : value;
+  }
+
+  /* Every animated layer parameter in the show: two or more keys, or driven by
+   * an expression. Same document as build_keyframes in d3_extract.py. */
+  function buildKeyframes(buffer, options) {
+    options = options || {};
+    var archive = buffer instanceof Archive ? buffer : new Archive(buffer);
+    var fileName = options.fileName || 'project.d3';
+    var codes = {};
+    Object.keys(INTERPOLATION).forEach(function (k) { codes[k] = INTERPOLATION[k]; });
+    var doc = {
+      format: 'd3_keyframes',
+      formatVersion: KEYFRAMES_FORMAT_VERSION,
+      capturedAt: options.capturedAt || localIso(new Date()),
+      project: options.project || fileName.replace(/\.[^.]*$/, ''),
+      source: fileName,
+      scope: 'animated',
+      interpolation: {
+        codes: codes,
+        note: 'Inferred from how the codes are used across a real show; not confirmed in Designer.'
+      },
+      trackCount: 0, layerCount: 0, fieldCount: 0, keyCount: 0,
+      tracks: [],
+      writtenTo: options.writtenTo || null
+    };
+    var census = archive.names(TRACK_ROOT + '/').filter(function (p) {
+      return p.endsWith('.apx') && p.split('/').length === 3;
+    }).sort(pyCompare);
+    var tracks = [];
+    census.forEach(function (path) {
+      var track = parseTrack(archive.read(path), path);
+      var layers = [];
+      track.layers.forEach(function (layer) {
+        var fields = [];
+        layer.fields.forEach(function (field) {
+          if (field.keys.length < 2 && !field.expression) return;
+          var cls = field.cls;
+          fields.push({
+            name: field.name,
+            valueType: field.valueType,
+            expression: field.expression,
+            default: keyframeValue(cls, field.default),
+            keys: field.keys.map(function (key) {
+              return {
+                t: num(key[0]),
+                value: keyframeValue(cls, key[1]),
+                interpolation: INTERPOLATION.hasOwnProperty(key[2]) ? INTERPOLATION[key[2]] : 'unknown (' + key[2] + ')'
+              };
+            })
+          });
+        });
+        if (!fields.length) return;
+        var uid = uidInt(layer.uid);
+        layers.push({
+          id: uid !== null ? '#' + uid.toString() : null,
+          uid: uid,
+          name: layer.name,
+          type: layer.type,
+          groupPath: layer.groupPath,
+          tStart: num(layer.tStart),
+          tEnd: num(layer.tEnd),
+          fields: fields
+        });
+        doc.fieldCount += fields.length;
+        fields.forEach(function (f) { doc.keyCount += f.keys.length; });
+      });
+      if (layers.length) {
+        tracks.push({ id: trackId(stem(path), path), name: stem(path), path: path,
+                      bpm: num(track.bpm), layers: layers });
+        doc.layerCount += layers.length;
+      }
+    });
+    doc.tracks = tracks.sort(function (a, b) { return pyCompare(a.id, b.id); });
+    doc.trackCount = tracks.length;
+    return doc;
+  }
+
   // --- JSON, written the way Python's json.dumps(indent=2, sort_keys=True) does --
 
   // Keys whose values are Python floats: 60.0 must print as 60.0, not 60.
-  var FLOAT_KEYS = new Set(['beat', 't', 'tStart', 'tEnd', 'bStart', 'bEnd', 'lengthInSec',
+  var FLOAT_KEYS = new Set(['beat', 't', 'tStart', 'tEnd', 'bStart', 'bEnd', 'lengthInSec', 'value', 'default',
                             'lengthInBeats', 'bpm', 'fps', 'firstTimecodeBeat']);
 
   function pyFloat(x) {
@@ -858,10 +958,11 @@
     SCHEMA_VERSION: SCHEMA_VERSION,
     ParseError: ParseError,
     buildSnapshot: buildSnapshot,
+    buildKeyframes: buildKeyframes,
     toJson: toJson,
     localIso: localIso,
     // exposed for tests
     _parseTrack: parseTrack, _parseCue: parseCue, _parseVideoAsset: parseVideoAsset,
-    _parseSetlist: parseSetlist, _Archive: Archive, _roundHalfAway: roundHalfAway
+    _parseSetlist: parseSetlist, _Archive: Archive, _roundHalfAway: roundHalfAway, _f32Value: f32Value
   };
 });

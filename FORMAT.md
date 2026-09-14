@@ -76,14 +76,25 @@ a disabled layer has never been checked against this byte.
 ```
 FieldSequence v17: cstr fieldName, cstr valueType, <Float|Resource|String>Sequence object
   KeyContainer v1, KeySequence v6 u32, <X>Sequence v: u32 nKeys, keys...
-    Float:    u32 u32 f64 t, 3 bytes, f32 value
-    Resource: cstr keyClass, u32 u32 f64 t, 3 bytes, cstr path
-    String:   u32 u32 f64 t, 3 bytes, cstr value
+    Float:    u32 u32 f64 t, u8 interpolation, u8 u8, f32 value
+    Resource: cstr keyClass, u32 u32 f64 t, u8 interpolation, u8 u8, cstr path
+    String:   u32 u32 f64 t, u8 interpolation, u8 u8, cstr value
   cstr owningModule, (`null` | Expression object), (`null` | Expression object),
   u8, default value (f32 or cstr), cstr uiCategory
+Expression v3: cstr text, u32, u8
 ```
 
-A layer's media is the `video` field's ResourceSequence keys.
+- A layer's media is the `video` field's ResourceSequence keys.
+- Key times are in track seconds.
+- Interpolation codes, inferred from usage:
+  - 2 = linear (nearly every float key).
+  - 0 = step (nearly every uint, clip and string key).
+  - 1 = smooth (34 keys, on brightness and Notch time).
+- The first Expression slot holds the expression that drives the parameter.
+- A layer can carry two fields with the same name, so fields are a list, not a map.
+- Notch exposed parameters are named `Value::Attributes::<GUID>`, and
+  `internal/metafield/notchmodule/value::attributes::<guid>.apx` holds only their
+  range and step. The readable name isn't in either place.
 
 ### Cue (`internal/cue/uid_*.apx`)
 
