@@ -19,6 +19,13 @@ repeat:
   payload (payloadLen bytes), then padding up to recordLen
 ```
 
+A record can start `----` instead of `****`: a dead copy. Designer saves a
+change by appending a new copy of the resource and marking the old copy `----`
+in place, so a project saved that way holds both. Same header and length; step
+over it and never read it. Measured 2026-09-23 on four saves of a test project,
+toggling a clip's versions: each carried one dead `objects/videoasset/` record
+whose live copy was later in the file. A freshly written archive has none.
+
 Uncompressed. One record per resource file of the project folder (`objects/`,
 `internal/`, `trash/`, `conf/`). **Not included:** `internal/options/options.bin`
 and `{d3 Projects}/machine.bin`, which is why `system.options` can't be recovered.
@@ -120,6 +127,9 @@ Tag types: 0 = timecode, 1 = cue, 2 = MIDI.
   newest version first, ending with the `objects/videoregionset/.../<regionSet>.apx` path.
 - Enabled version = the newest version whose fragments have `usable` = 1. This matched
   Designer's `enabledVersion` on all 955 clips in the reference show.
+  `usable` is the version's on/off switch in Designer: four saves of a test clip
+  (all on; v3 off; v2 off with v3 on; v2 and v3 off) flipped exactly the versions
+  switched off to 0, and the enabled version came out v003, v002, v003, v001.
 
 ### Transports, setlists and state
 

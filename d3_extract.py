@@ -69,7 +69,12 @@ def _num(value):
 
 class Archive(object):
     """A .d3 file: 12-byte header, then `****` records of
-    (u32 total, u32 payloadLen, 8 reserved, 8 timestamp, u32 nameLen, name, payload)."""
+    (u32 total, u32 payloadLen, 8 reserved, 8 timestamp, u32 nameLen, name, payload).
+
+    A record starting `----` is a dead copy: Designer saves a change by appending
+    a new copy of the resource and marking the old one dead in place, so both are
+    in the file. Dead records are stepped over like live ones and never indexed;
+    `dead` counts them."""
 
     MAGIC = b"r\x19\x04\x07blip"
 
@@ -80,15 +85,21 @@ class Archive(object):
         if self._mm[:8] != self.MAGIC:
             raise ValueError("not a d3 project archive: {0}".format(path))
         self.entries = {}
+        self.dead = 0
         off, size = 12, len(self._mm)
         while off < size:
-            if self._mm[off:off + 4] != b"****":
+            tag = self._mm[off:off + 4]
+            if tag not in (b"****", b"----"):
                 raise ValueError("archive record out of sync at 0x{0:x}".format(off))
             total, plen = struct.unpack_from("<II", self._mm, off + 4)
             nlen = struct.unpack_from("<I", self._mm, off + 28)[0]
             if off + total > size or 32 + nlen + plen > total:
                 raise ValueError("archive truncated or corrupt at 0x{0:x} "
                                  "(incomplete download or copy?)".format(off))
+            if tag == b"----":
+                self.dead += 1
+                off += total
+                continue
             name = self._mm[off + 32:off + 32 + nlen].decode("utf-8", "replace")
             self.entries[name] = (off + 32 + nlen, plen)
             off += total

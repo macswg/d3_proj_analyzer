@@ -83,9 +83,14 @@
     }
     this.entries = new Map();
     this.folded = new Map();
+    // A record starting `----` is a dead copy: Designer saves a change by
+    // appending a new copy of the resource and marking the old one dead in
+    // place. Stepped over like a live record, never indexed; `dead` counts them.
+    this.dead = 0;
     var off = 12, size = b.length;
     while (off < size) {
-      if (off + 32 > size || b[off] !== 42 || b[off + 1] !== 42 || b[off + 2] !== 42 || b[off + 3] !== 42) {
+      var mark = off + 32 > size ? -1 : b[off];
+      if ((mark !== 42 && mark !== 45) || b[off + 1] !== mark || b[off + 2] !== mark || b[off + 3] !== mark) {
         throw new ParseError('archive record out of sync at 0x' + off.toString(16));
       }
       var total = v.getUint32(off + 4, true), plen = v.getUint32(off + 8, true);
@@ -93,6 +98,11 @@
       if (off + total > size || 32 + nlen + plen > total) {
         throw new ParseError('archive truncated or corrupt at 0x' + off.toString(16) +
                              ' (incomplete download or copy?)');
+      }
+      if (mark === 45) {
+        this.dead++;
+        off += total;
+        continue;
       }
       var name = utf8.decode(b.subarray(off + 32, off + 32 + nlen));
       this.entries.set(name, [off + 32 + nlen, plen]);
