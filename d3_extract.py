@@ -41,7 +41,11 @@ DIRECTOR_STATE = "internal/localstate/_directorstate_.apx"
 _FPS_BY_CLOCK = {0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0}
 _TAG_NAMES = {0: "tc", 1: "cue", 2: "midi"}
 
-KEYFRAMES_FORMAT_VERSION = 2
+KEYFRAMES_FORMAT_VERSION = 3
+# A layer's colour grade: a ResourceSequence of CDL resources. Exported even
+# with a single key, which is how a grade is nearly always set -- the
+# two-or-more-keys rule kept 2 of 435 graded layers in a production show.
+CDL_VALUE_TYPE = "CDL::RP"
 # Keyframe interpolation codes. Inferred, not confirmed in Designer: 2 is on
 # nearly every float key, 0 on nearly every whole-number, clip and string key
 # (which can only hold, not blend), and 1 on a handful of brightness and Notch
@@ -800,11 +804,55 @@ def _keyframe_value(cls, value):
     return value[:-4] if (cls == "ResourceSequence" and value.endswith(".apx")) else value
 
 
+def _cdl_archive_path(ref):
+    """Where a layer's CDL reference is stored. A CDL made in Designer is
+    objects/cdl/<name>.apx; an imported .cc file is referenced as
+    objects/lutfile/<name>.cc but packed as internal/lutfile/<name>.cc.apx."""
+    if ref.startswith("objects/lutfile/"):
+        return "internal/lutfile/" + ref[len("objects/lutfile/"):] + ".apx"
+    return ref + ".apx"
+
+
+def parse_cdl(data, path):
+    """CDL v2: f32 slope[3], power[3], offset[3], saturation. The order is
+    inferred from values, not documented: identity is stored 1,1,1 1,1,1 0,0,0 1,
+    so the zero triplet is offset, and a grade named red only reads red with the
+    second triplet as power (1.26/1.32 on green/blue darkens them)."""
+    r = Reader(data, path)
+    r.open_object()
+    r.object_head("CDL")
+    version = r.section("CDL")
+    if version != 2:
+        r.fail("unsupported CDL version {0}".format(version))
+    v = [_f32_value(r.f32()) for _ in range(10)]
+    return {"slope": v[0:3], "power": v[3:6], "offset": v[6:9], "saturation": v[9]}
+
+
+def _cdl_record(archive, ref):
+    path = _cdl_archive_path(ref)
+    rec = {"name": _stem(ref)[:-3] if ref.endswith(".cc") else _stem(ref),
+           "source": "ccFile" if ref.startswith("objects/lutfile/") else "designer",
+           "archivePath": path, "slope": None, "power": None, "offset": None,
+           "saturation": None, "error": None}
+    if not archive.has(path):
+        rec["error"] = "not in archive"
+        return rec
+    try:
+        rec.update(parse_cdl(archive.read(path), path))
+    except (ParseError, IndexError, ValueError, struct.error):
+        # Fixed text: the two ports word their parse errors differently, and the
+        # browser's export must match this one byte for byte.
+        rec["error"] = "unreadable CDL resource"
+    return rec
+
+
 def build_keyframes(archive_path, project=None, captured_at=None):
     """Every animated layer parameter in the show, as a separate document from
     the snapshot. "Animated" means two or more keys, or driven by an expression:
     a single key is just the parameter's constant value, and the show holds
-    ~190,000 of those against under a thousand real animations."""
+    ~190,000 of those against under a thousand real animations. A CDL field is
+    the exception (see CDL_VALUE_TYPE): it is kept whenever it applies a CDL,
+    and every CDL it names is decoded into the top-level `cdls` table."""
     archive = Archive(archive_path)
     doc = {
         "format": "d3_keyframes",
@@ -818,6 +866,7 @@ def build_keyframes(archive_path, project=None, captured_at=None):
             "note": "Inferred from how the codes are used across a real show; not confirmed in Designer.",
         },
         "trackCount": 0, "layerCount": 0, "fieldCount": 0, "keyCount": 0,
+        "cdlCount": 0, "cdls": {},
         "tracks": [],
         "writtenTo": None,
     }
@@ -844,9 +893,16 @@ def build_keyframes(archive_path, project=None, captured_at=None):
         for layer in track["layers"]:
             fields = []
             for field in layer["fields"]:
-                if len(field["keys"]) < 2 and not field["expression"]:
-                    continue
                 cls = field["cls"]
+                cdl_refs = []
+                if field["valueType"] == CDL_VALUE_TYPE:
+                    cdl_refs = [v for v in [_keyframe_value(cls, field["default"])] +
+                                [_keyframe_value(cls, k[1]) for k in field["keys"]] if v]
+                if len(field["keys"]) < 2 and not field["expression"] and not cdl_refs:
+                    continue
+                for ref in cdl_refs:
+                    if ref not in doc["cdls"]:
+                        doc["cdls"][ref] = _cdl_record(archive, ref)
                 label, source = field["label"] or None, "layer" if field["label"] else None
                 if label is None and len(names.get(field["name"], ())) == 1:
                     label, source = next(iter(names[field["name"]])), "show"
@@ -889,6 +945,7 @@ def build_keyframes(archive_path, project=None, captured_at=None):
             doc["layerCount"] += len(layers)
     doc["tracks"] = sorted(tracks, key=lambda t: t["id"])
     doc["trackCount"] = len(tracks)
+    doc["cdlCount"] = len(doc["cdls"])
     return doc
 
 
@@ -1011,9 +1068,9 @@ def main(argv=None):
         keyframes["writtenTo"] = os.path.abspath(kout)
         with open(kout, "w") as fh:
             fh.write(json.dumps(keyframes, indent=2, sort_keys=True))
-        print("wrote {0}: {1} keys on {2} parameters, {3} layers, {4} tracks".format(
+        print("wrote {0}: {1} keys on {2} parameters, {3} layers, {4} tracks, {5} CDLs".format(
             kout, keyframes["keyCount"], keyframes["fieldCount"],
-            keyframes["layerCount"], keyframes["trackCount"]))
+            keyframes["layerCount"], keyframes["trackCount"], keyframes["cdlCount"]))
     return 0
 
 

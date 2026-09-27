@@ -111,6 +111,34 @@ Expression v3: cstr text, u32, u8
   an 87-byte stub, and `internal/metafield/notchmodule/...` holds only range and
   step.
 
+### CDL
+
+A layer's grade is a `cdl` FieldSequence, value type `CDL::RP`, holding a
+ResourceSequence. Its keys name one of:
+
+- `objects/cdl/<name>.apx`: a CDL made in Designer.
+- `objects/lutfile/<name>.cc`: an imported ASC `.cc` file. This path isn't a
+  record in the archive; the object is packed as `internal/lutfile/<name>.cc.apx`.
+  The original `.cc` XML isn't packed at all.
+
+Both are the same class:
+
+```
+CDL v2: f32 slope[3], f32 power[3], f32 offset[3], f32 saturation, ...
+```
+
+The field order is **inferred** from a production show (r34.1.2, 18 CDLs), not
+documented:
+
+- Identity is stored `1,1,1 1,1,1 0,0,0 1`, so the zero triplet is offset.
+- `120_liquid_red_jc` only reads red with the second triplet as power, since
+  1.26 and 1.32 on green and blue darken them. `300_lasers_yellow_jc` only reads
+  yellow with blue slope 0.75 in the first.
+
+After saturation come 7 zero u32s, `u32 2`, `u32 3` and 3 bytes, which aren't
+read. They may be the OCIO and ACES pre/post transforms the Python API lists
+on CDL.
+
 ### Cue (`internal/cue/uid_*.apx`)
 
 ```

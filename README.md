@@ -32,8 +32,8 @@ captures them from a running Designer.
    (see [Keyframes](#keyframes)).
 
 The page also summarises the snapshot: transports and their setlists, and the
-number of tracks, layers, cues, media references, animated parameters and
-keyframes. A 148 MB archive takes
+number of tracks, layers, cues, media references, animated parameters,
+keyframes and CDLs. A 148 MB archive takes
 under a second in Chrome.
 
 ## From the command line
@@ -80,14 +80,25 @@ The keyframes file is a separate JSON document (`"format": "d3_keyframes"`)
 holding every **animated** layer parameter in the show: a parameter with two or
 more keys, or one driven by an expression. A single key is just the parameter's
 constant value, and a show holds tens of thousands of those, so they're left
-out. It covers every track in the show, not just the ones in a setlist. The diff
-tool doesn't read this file.
+out. The exception is a layer's **CDL**: a grade is nearly always set with one
+key, so a `cdl` field is exported whenever it applies a CDL (see
+[CDLs](#cdls)). It covers every track in the show, not just the ones in a
+setlist. The diff tool doesn't read this file.
 
 ```json
 {
-  "format": "d3_keyframes", "formatVersion": 2,
+  "format": "d3_keyframes", "formatVersion": 3,
   "project": "my_show", "capturedAt": "2026-09-13T15:38:31-07:00",
   "trackCount": 69, "layerCount": 872, "fieldCount": 1625, "keyCount": 4499,
+  "cdlCount": 1,
+  "cdls": {
+    "objects/cdl/300_lasers_yellow_jc": {
+      "name": "300_lasers_yellow_jc", "source": "designer",
+      "archivePath": "objects/cdl/300_lasers_yellow_jc.apx",
+      "slope": [1.0, 0.95, 0.75], "power": [0.92, 1.0, 1.0],
+      "offset": [0.0, 0.0, 0.0], "saturation": 1.0, "error": null
+    }
+  },
   "tracks": [{
     "id": "430_intro", "name": "430_intro", "path": "objects/track/430_intro.apx", "bpm": 60.0,
     "layers": [{
@@ -141,6 +152,25 @@ tool doesn't read this file.
   file it uses (e.g. `objects/notchfile/show_master.dfxdll`). The block itself
   isn't packed into a `.d3`, so its full parameter list isn't available, only
   the names the layers store.
+
+### CDLs
+
+A video layer's colour grade is its `cdl` field (`valueType` `CDL::RP`). Each
+key's `value` is the CDL the layer switches to at `t`, or `null` for none, and
+the grade holds until the next key (`step`). Every CDL a layer names is decoded
+once into the top-level `cdls` table, keyed by that same value:
+
+- **`source`** is `designer` for a CDL made in Designer (`objects/cdl/...`) or
+  `ccFile` for an imported ASC `.cc` file (`objects/lutfile/<name>.cc`, packed
+  as `internal/lutfile/<name>.cc.apx`; `archivePath` says which).
+- **`slope`**, **`power`**, **`offset`** are RGB triplets; **`saturation`** is a
+  number. The order they're stored in is **inferred** from the values, not
+  documented. See [FORMAT.md](FORMAT.md#cdl).
+- **`error`** is `"not in archive"` or `"unreadable CDL resource"` when the
+  values couldn't be read, and the four values are then `null`.
+
+In formatVersion 2, a `cdl` field was left out unless it had two or more keys,
+which dropped nearly every graded layer.
 
 ## What's in the snapshot
 

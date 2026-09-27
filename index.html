@@ -178,7 +178,8 @@
       Next: open <a href="https://macswg.github.io/d3_snapshot_diff/" target="_blank" rel="noopener">d3_snapshot_diff</a>
       and load the snapshot next to another snapshot (from this page or from the plugin).
       The keyframes file is separate: every animated layer parameter in the show (two or more
-      keys, or an expression), with times, values, interpolation and Notch parameter names. The diff tool doesn't
+      keys, or an expression) and every layer's CDL, with times, values, interpolation, Notch
+      parameter names and each CDL's slope, offset, power and saturation. The diff tool doesn't
       read it, and the interpolation names are inferred rather than confirmed in Designer.
     </p>
   </section>
@@ -314,7 +315,7 @@
     stats.textContent = '';
     [[s.transportCount, 'transports'], [s.trackCount, 'tracks in setlists'],
      [s.showfile.trackCount, 'tracks in show'], [layers, 'layers'], [cues, 'cues'], [media, 'media refs'],
-     [k.fieldCount, 'animated parameters'], [k.keyCount, 'keyframes']]
+     [k.fieldCount, 'animated parameters'], [k.keyCount, 'keyframes'], [k.cdlCount, 'CDLs']]
       .forEach(function (pair) {
         var box = el('div', { class: 'stat' });
         box.appendChild(el('div', { class: 'n' }, pair[0].toLocaleString()));

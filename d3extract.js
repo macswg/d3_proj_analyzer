@@ -21,7 +21,9 @@
   var FPS_BY_CLOCK = { 0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0 };
   var TAG_NAMES = { 0: 'tc', 1: 'cue', 2: 'midi' };
   var TAG_TC = 0;
-  var KEYFRAMES_FORMAT_VERSION = 2;
+  var KEYFRAMES_FORMAT_VERSION = 3;
+  // Exported even with a single key -- see CDL_VALUE_TYPE in d3_extract.py.
+  var CDL_VALUE_TYPE = 'CDL::RP';
   // Inferred, not confirmed in Designer -- see INTERPOLATION in d3_extract.py.
   var INTERPOLATION = { 0: 'step', 1: 'smooth', 2: 'linear' };
   var OBJECT_MAGIC = [0x72, 0x19, 0x04, 0x07];
@@ -828,8 +830,48 @@
     return cls === 'ResourceSequence' && value.endsWith('.apx') ? value.slice(0, -4) : value;
   }
 
+  /* Same as _cdl_archive_path: an imported .cc is referenced under
+   * objects/lutfile/ but packed under internal/lutfile/. */
+  function cdlArchivePath(ref) {
+    if (ref.startsWith('objects/lutfile/')) return 'internal/lutfile/' + ref.slice('objects/lutfile/'.length) + '.apx';
+    return ref + '.apx';
+  }
+
+  /* CDL v2: f32 slope[3], power[3], offset[3], saturation. Order inferred; see
+   * parse_cdl in d3_extract.py. */
+  function parseCdl(bytes, path) {
+    var r = new Reader(bytes, path);
+    r.openObject();
+    r.objectHead('CDL');
+    var version = r.section('CDL');
+    if (version !== 2) r.fail('unsupported CDL version ' + version);
+    var v = [];
+    for (var k = 0; k < 10; k++) v.push(f32Value(r.f32()));
+    return { slope: v.slice(0, 3), power: v.slice(3, 6), offset: v.slice(6, 9), saturation: v[9] };
+  }
+
+  function cdlRecord(archive, ref) {
+    var path = cdlArchivePath(ref);
+    var name = stem(ref);
+    var rec = { name: ref.endsWith('.cc') ? name.slice(0, -3) : name,
+                source: ref.startsWith('objects/lutfile/') ? 'ccFile' : 'designer',
+                archivePath: path, slope: null, power: null, offset: null,
+                saturation: null, error: null };
+    if (!archive.has(path)) {
+      rec.error = 'not in archive';
+      return rec;
+    }
+    try {
+      Object.assign(rec, parseCdl(archive.read(path), path));
+    } catch (error) {
+      rec.error = 'unreadable CDL resource';
+    }
+    return rec;
+  }
+
   /* Every animated layer parameter in the show: two or more keys, or driven by
-   * an expression. Same document as build_keyframes in d3_extract.py. */
+   * an expression, plus any CDL field that applies a CDL. Same document as
+   * build_keyframes in d3_extract.py. */
   function buildKeyframes(buffer, options) {
     options = options || {};
     var archive = buffer instanceof Archive ? buffer : new Archive(buffer);
@@ -848,6 +890,7 @@
         note: 'Inferred from how the codes are used across a real show; not confirmed in Designer.'
       },
       trackCount: 0, layerCount: 0, fieldCount: 0, keyCount: 0,
+      cdlCount: 0, cdls: {},
       tracks: [],
       writtenTo: options.writtenTo || null
     };
@@ -877,8 +920,17 @@
       track.layers.forEach(function (layer) {
         var fields = [];
         layer.fields.forEach(function (field) {
-          if (field.keys.length < 2 && !field.expression) return;
           var cls = field.cls;
+          var cdlRefs = [];
+          if (field.valueType === CDL_VALUE_TYPE) {
+            cdlRefs = [keyframeValue(cls, field.default)].concat(field.keys.map(function (key) {
+              return keyframeValue(cls, key[1]);
+            })).filter(function (v) { return v; });
+          }
+          if (field.keys.length < 2 && !field.expression && !cdlRefs.length) return;
+          cdlRefs.forEach(function (ref) {
+            if (!Object.prototype.hasOwnProperty.call(doc.cdls, ref)) doc.cdls[ref] = cdlRecord(archive, ref);
+          });
           var label = field.label || null, source = field.label ? 'layer' : null;
           if (label === null && names.has(field.name) && names.get(field.name).size === 1) {
             label = names.get(field.name).values().next().value;
@@ -924,6 +976,7 @@
     });
     doc.tracks = tracks.sort(function (a, b) { return pyCompare(a.id, b.id); });
     doc.trackCount = tracks.length;
+    doc.cdlCount = Object.keys(doc.cdls).length;
     return doc;
   }
 
@@ -931,7 +984,8 @@
 
   // Keys whose values are Python floats: 60.0 must print as 60.0, not 60.
   var FLOAT_KEYS = new Set(['beat', 't', 'tStart', 'tEnd', 'bStart', 'bEnd', 'lengthInSec', 'value', 'default',
-                            'lengthInBeats', 'bpm', 'fps', 'firstTimecodeBeat']);
+                            'lengthInBeats', 'bpm', 'fps', 'firstTimecodeBeat',
+                            'slope', 'power', 'offset', 'saturation']);
 
   function pyFloat(x) {
     if (!isFinite(x)) return x !== x ? 'NaN' : (x > 0 ? 'Infinity' : '-Infinity');
