@@ -828,25 +828,39 @@
     var census = archive.names(TRACK_ROOT + '/').filter(function (p) {
       return p.endsWith('.apx') && p.split('/').length === 3;
     }).sort(pyCompare);
+    var plans = [];
+    var ltcFps = new Map();
     order.forEach(function (name) {
       var bytes = transports.get(name);
       var record = { name: name, setlist: null, trackCount: 0, trackRefs: [], error: null };
       var setlists = pathsIn(bytes, 'objects/usersetlist/').concat(pathsIn(bytes, 'objects/setlist/'));
       if (!setlists.length || !archive.has(setlists[0])) {
         record.error = 'transport has no setlist';
-        snapshot.transports.push(record);
+        plans.push([record, []]);
         return;
       }
       record.setlist = stem(setlists[0]);
-      var fps = transportFps(archive, bytes, debug);
-      if (fps === null) fps = activeFps;
       // automatic.apx is empty on disk -- Designer fills it with every track on
       // load -- so reading it gave a transport on the automatic setlist no
       // tracks at all, and a project played that way an empty snapshot.
       var refs = setlists[0] === AUTOMATIC_SETLIST_PATH ? census
         : parseSetlist(archive.read(setlists[0]), setlists[0]);
-      record.trackRefs = refs.map(function (t) {
-        return builder.add(t, fps);
+      plans.push([record, refs]);
+      var fps = transportFps(archive, bytes, debug);
+      if (fps !== null) {
+        refs.forEach(function (t) {
+          var key = archive.resolve(t) || t;
+          if (!ltcFps.has(key)) ltcFps.set(key, fps);
+        });
+      }
+    });
+    plans.forEach(function (plan) {
+      var record = plan[0];
+      // The rate comes from a transport with an LTC input, not from whichever
+      // transport builds the track first -- see build_snapshot in d3_extract.py.
+      record.trackRefs = plan[1].map(function (t) {
+        var key = archive.resolve(t) || t;
+        return builder.add(t, ltcFps.has(key) ? ltcFps.get(key) : activeFps);
       });
       record.trackCount = record.trackRefs.length;
       snapshot.transports.push(record);
@@ -854,6 +868,16 @@
 
     snapshot.transportCount = snapshot.transports.length;
     snapshot.tracks = builder.sortedRecords();
+    // Said out loud because a null here otherwise reads as "no timecode tags".
+    var unrated = snapshot.tracks.filter(function (t) {
+      return t.fps === null && t.cues.some(function (cue) {
+        return cue.tags.some(function (tag) { return tag.type === 'tc'; });
+      });
+    }).map(function (t) { return t.id; });
+    if (unrated.length) {
+      debug.push(unrated.length + ' tracks have timecode tags but no frame rate: no transport ' +
+                 'playing them has a readable LTC frame rate (' + unrated.join(', ') + ')');
+    }
     snapshot.trackCount = snapshot.tracks.length;
 
     snapshot.showfile.trackIds = census.map(function (p) { return builder.idFor(p); });

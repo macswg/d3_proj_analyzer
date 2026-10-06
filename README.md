@@ -198,6 +198,24 @@ The same fields as a plugin capture:
 - **Showfile census:** every track in the show, so a diff can tell a deleted
   track from one that was just dropped from a setlist.
 
+### Frame rate
+
+A track's timecode needs a frame rate, and the archive stores one only on a
+transport's LTC input; a track has none of its own. So a track takes the rate
+of the first transport, active one first, that plays it **and** has an LTC
+input. A track no LTC transport plays falls back to the active transport's
+rate, and when that has none either its `fps`, `tcStart`, `tcEnd` and cue
+`timecode` are `null` and `debug` names it if it carries TC tags.
+
+Earlier versions took the rate from whichever transport reached the track
+first. On a show saved with an LTC-less transport active, that was the LTC-less
+editor transport, which plays the same setlist as the show transports, and every
+track came out with no timecode.
+
+The `29.97` rate covers both 29.97 clock types. A drop-frame input is read with
+non-drop-frame arithmetic, as the plugin does, so the two agree; whether
+Designer shows drop-frame labels there is untested.
+
 ## What an archive can't provide
 
 A `.d3` doesn't hold everything the plugin reads from a running Designer:

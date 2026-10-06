@@ -1062,29 +1062,50 @@ def build_snapshot(archive_path, project=None, captured_at=None):
     builder = TrackBuilder(archive, debug)
     census = sorted(p for p in archive.names(TRACK_ROOT + "/") if p.endswith(".apx")
                     and p.count("/") == 2)
+    plans = []
+    ltc_fps = {}
     for name in order:
         data = transports[name]
         record = {"name": name, "setlist": None, "trackCount": 0, "trackRefs": [], "error": None}
         setlists = _paths_in(data, "objects/usersetlist/") + _paths_in(data, "objects/setlist/")
         if not setlists or not archive.has(setlists[0]):
             record["error"] = "transport has no setlist"
-            snapshot["transports"].append(record)
+            plans.append((record, []))
             continue
         record["setlist"] = _stem(setlists[0])
-        # A transport with no LTC input still reports a frame rate in Designer;
-        # on the reference show it was the active transport's.
-        fps = _transport_fps(archive, data, debug) or active_fps
         # automatic.apx is empty on disk -- Designer fills it with every track on
         # load -- so reading it gave a transport on the automatic setlist no
         # tracks at all, and a project played that way an empty snapshot.
         refs = (census if setlists[0] == AUTOMATIC_SETLIST_PATH
                 else parse_setlist(archive.read(setlists[0]), setlists[0]))
-        record["trackRefs"] = [builder.add(t, fps) for t in refs]
+        plans.append((record, refs))
+        fps = _transport_fps(archive, data, debug)
+        if fps is not None:
+            for t in refs:
+                ltc_fps.setdefault(archive.resolve(t) or t, fps)
+    for record, refs in plans:
+        # A track is built once, by the first transport that plays it, but the
+        # rate has to come from a transport with an LTC input. Taking it from the
+        # first transport left every track null on a show saved with an LTC-less
+        # transport active, because the LTC-less editor transport sorts ahead of
+        # the show transports that chase the same setlist at 29.97. Only a track
+        # no LTC transport plays falls back to the active transport's rate, which
+        # is what Designer reported for an LTC-less transport on the show where
+        # that was measured.
+        record["trackRefs"] = [builder.add(t, ltc_fps.get(archive.resolve(t) or t, active_fps))
+                               for t in refs]
         record["trackCount"] = len(record["trackRefs"])
         snapshot["transports"].append(record)
 
     snapshot["transportCount"] = len(snapshot["transports"])
     snapshot["tracks"] = builder.sorted_records()
+    # Said out loud because a null here otherwise reads as "no timecode tags",
+    # which is the other way a track's timecode comes out null.
+    unrated = [t["id"] for t in snapshot["tracks"] if t["fps"] is None and any(
+        tag["type"] == "tc" for cue in t["cues"] for tag in cue["tags"])]
+    if unrated:
+        debug.append("{0} tracks have timecode tags but no frame rate: no transport "
+                     "playing them has a readable LTC frame rate ({1})".format(len(unrated), ", ".join(unrated)))
     snapshot["trackCount"] = len(snapshot["tracks"])
 
     ids = [builder.id_for(p) for p in census]

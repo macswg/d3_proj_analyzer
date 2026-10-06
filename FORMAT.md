@@ -173,7 +173,21 @@ Tag types: 0 = timecode, 1 = cue, 2 = MIDI.
 - UserSetList: `SetList v1, UserSetList v1, u32 n, n x cstr trackPath`.
 - `objects/setlist/automatic.apx` is empty on disk: the automatic setlist is every
   `objects/track/*.apx`.
-- TimecodeTransportLtc v2: `cstr audioLine, u32 smpteClockType` → frame rate.
+- A frame rate lives only on a timecode input. A transport names its LTC input
+  as `objects/timecodetransportltc/<name>.apx`, and that object reads
+  ```
+  TimecodeTransport v1:        (no fields)
+  TimecodeTransportClocked v1: u32
+  TimecodeTransportLtc v2:     cstr audioLine, u32 smpteClockType, u32
+  ```
+  Clock types are Designer's `Timecode.SMPTE*` constants: 0 = 23.976, 1 = 24,
+  2 = 25, 3 = 29.97, 4 = 29.97 drop-frame, 5 = 30. The reference show's three
+  show transports store 4 and a previz input stores 3.
+- A track has no frame rate of its own. Nothing in the Track or Cue objects
+  varies with it: across the reference show's 117 tracks the unread Track
+  fields differ only in transition settings, and a cue tag's second u32 just
+  repeats the tag type (0 on all 116 TC tags, 1 on every cue tag). A transport
+  with no LTC input stores no rate either.
 - Active transport: the last `objects/transportmanager/` path in
   `internal/localstate/_directorstate_.apx`.
 - Muted layers: LocalState v25 opens with `muted`, a MapTable of layer uid to bool,
