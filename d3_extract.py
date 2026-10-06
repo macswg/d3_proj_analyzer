@@ -41,7 +41,7 @@ DIRECTOR_STATE = "internal/localstate/_directorstate_.apx"
 _FPS_BY_CLOCK = {0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0}
 _TAG_NAMES = {0: "tc", 1: "cue", 2: "midi"}
 
-KEYFRAMES_FORMAT_VERSION = 3
+KEYFRAMES_FORMAT_VERSION = 4
 # A layer's colour grade: a ResourceSequence of CDL resources. Exported even
 # with a single key, which is how a grade is nearly always set -- the
 # two-or-more-keys rule kept 2 of 435 graded layers in a production show.
@@ -318,7 +318,10 @@ def _skip_module_config(r):
     return paths
 
 
-def _read_layer(r, group_path, out):
+def _read_layer(r, group_path, out, group_uids, parent_enabled):
+    """`group_uids` carries the enclosing groups so a mute set on a group can
+    reach the layers inside it; `parent_enabled` does the same for disable,
+    which Designer applies to a group's children."""
     cls, uid = r.object_head()
     r.section("SuperLayer")
     name = r.cstr()
@@ -326,12 +329,17 @@ def _read_layer(r, group_path, out):
     duration = r.f64()
     r.skip(8)
     render_enable = bool(r.u8())
-    r.skip(2)
+    # Designer's Disable (D+click), saved with the project. Located by saving one
+    # project with a layer disabled and its sibling not: this byte was the only
+    # difference, and renderEnable stayed 1 on both. The byte is read first: put
+    # parent_enabled first and `and` skips the read inside a disabled group.
+    enabled = bool(r.u8()) and parent_enabled
+    r.skip(1)
 
     if cls == "GroupLayer":
         r.section("GroupLayer")
         for _ in range(r.u32()):
-            _read_layer(r, group_path + [name], out)
+            _read_layer(r, group_path + [name], out, group_uids + [uid], enabled)
         _read_arrows(r)
         return
     if cls != "Layer":
@@ -363,7 +371,9 @@ def _read_layer(r, group_path, out):
         "uid": uid,
         "type": module or "Layer",
         "groupPath": list(group_path),
+        "groupUids": list(group_uids),
         "renderEnable": render_enable,
+        "enabled": enabled,
         "tStart": t_start,
         "tEnd": t_start + duration,
         "fields": fields,
@@ -378,7 +388,7 @@ def parse_track(data, path):
     r.section("SuperTrack")
     layers = []
     for _ in range(r.u32()):
-        _read_layer(r, [], layers)
+        _read_layer(r, [], layers, [], True)
     r.skip(8)
     _read_arrows(r)
     bpm = r.f32()
@@ -575,10 +585,40 @@ def _assign_layer_ids(records, debug):
     return records
 
 
+def _muted_layers(archive, debug):
+    """The layers muted on the director when the project was saved, as a set of
+    uid ints, or None when that cannot be read. Mute is per machine and resets
+    on a track change, so it lives in the director's LocalState rather than on
+    the layer: `muted` is a MapTable[layer uid, bool], written as u32 n, then
+    n x (u64 uid, u8 flag). Located the same way as `enabled` -- muting one
+    layer between two saves added exactly that layer's uid here."""
+    if not archive.has(DIRECTOR_STATE):
+        return None
+    try:
+        r = Reader(archive.read(DIRECTOR_STATE), DIRECTOR_STATE)
+        r.open_object()
+        r.object_head("LocalState")
+        r.section("LocalState")
+        n = r.u32()
+        if r.i + n * 9 > len(r.b):
+            r.fail("{0} muted layers would run past the end".format(n))
+        out = set()
+        for _ in range(n):
+            uid = struct.unpack_from("<Q", r.b, r.i)[0]
+            r.skip(8)
+            if r.u8():
+                out.add(uid)
+        return out
+    except ParseError as e:
+        debug.append("mute state not read: {0}".format(e))
+        return None
+
+
 class TrackBuilder(object):
     def __init__(self, archive, debug):
         self.archive = archive
         self.debug = debug
+        self.muted = _muted_layers(archive, debug)
         self.media = MediaResolver(archive, debug)
         self.records = {}
         self.by_path = {}
@@ -673,6 +713,9 @@ class TrackBuilder(object):
                 "type": layer["type"],
                 "groupPath": layer["groupPath"],
                 "renderEnable": layer["renderEnable"],
+                "enabled": layer["enabled"],
+                "muted": None if self.muted is None else any(
+                    _uid_int(u) in self.muted for u in [layer["uid"]] + layer["groupUids"]),
                 "tStart": _num(layer["tStart"]),
                 "tEnd": _num(layer["tEnd"]),
                 "bStart": b_start,
@@ -852,7 +895,15 @@ def build_keyframes(archive_path, project=None, captured_at=None):
     a single key is just the parameter's constant value, and the show holds
     ~190,000 of those against under a thousand real animations. A CDL field is
     the exception (see CDL_VALUE_TYPE): it is kept whenever it applies a CDL,
-    and every CDL it names is decoded into the top-level `cdls` table."""
+    and every CDL it names is decoded into the top-level `cdls` table.
+
+    Since format 4 a single key is kept too when it differs from the default,
+    marked `static`: that is a setting someone made (a blend mode, a mapping),
+    ~9,400 on the reference show against ~144,000 left at their defaults. The
+    comparison is on the raw values, before rounding, so a float32 that rounds
+    to its default is still a change and one that only looks changed is not.
+    fieldCount, keyCount, layerCount and trackCount still count animation only,
+    so a format-3 reader of these numbers sees what it always did."""
     archive = Archive(archive_path)
     doc = {
         "format": "d3_keyframes",
@@ -860,12 +911,12 @@ def build_keyframes(archive_path, project=None, captured_at=None):
         "capturedAt": captured_at or _captured_at(archive_path),
         "project": project or os.path.splitext(os.path.basename(archive_path))[0],
         "source": os.path.basename(archive_path),
-        "scope": "animated",
+        "scope": "animated+set",
         "interpolation": {
             "codes": dict((str(k), v) for k, v in INTERPOLATION.items()),
             "note": "Inferred from how the codes are used across a real show; not confirmed in Designer.",
         },
-        "trackCount": 0, "layerCount": 0, "fieldCount": 0, "keyCount": 0,
+        "trackCount": 0, "layerCount": 0, "fieldCount": 0, "keyCount": 0, "staticCount": 0,
         "cdlCount": 0, "cdls": {},
         "tracks": [],
         "writtenTo": None,
@@ -898,7 +949,9 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                 if field["valueType"] == CDL_VALUE_TYPE:
                     cdl_refs = [v for v in [_keyframe_value(cls, field["default"])] +
                                 [_keyframe_value(cls, k[1]) for k in field["keys"]] if v]
-                if len(field["keys"]) < 2 and not field["expression"] and not cdl_refs:
+                static = (len(field["keys"]) == 1 and not field["expression"] and not cdl_refs
+                          and field["keys"][0][1] != field["default"])
+                if len(field["keys"]) < 2 and not field["expression"] and not cdl_refs and not static:
                     continue
                 for ref in cdl_refs:
                     if ref not in doc["cdls"]:
@@ -912,6 +965,7 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                     "labelSource": source,
                     "valueType": field["valueType"],
                     "expression": field["expression"],
+                    "static": static,
                     "default": _keyframe_value(cls, field["default"]),
                     "keys": [{"t": _num(t),
                               "value": _keyframe_value(cls, value),
@@ -932,8 +986,10 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                 "notchBlock": layer["notchBlock"],
                 "fields": fields,
             })
-            doc["fieldCount"] += len(fields)
-            doc["keyCount"] += sum(len(f["keys"]) for f in fields)
+            animated = [f for f in fields if not f["static"]]
+            doc["fieldCount"] += len(animated)
+            doc["keyCount"] += sum(len(f["keys"]) for f in animated)
+            doc["staticCount"] += len(fields) - len(animated)
         if layers:
             tracks.append({
                 "id": _track_id(_stem(path), path),
@@ -942,9 +998,10 @@ def build_keyframes(archive_path, project=None, captured_at=None):
                 "bpm": _num(track["bpm"]),
                 "layers": layers,
             })
-            doc["layerCount"] += len(layers)
+            doc["layerCount"] += sum(1 for l in layers if any(not f["static"] for f in l["fields"]))
     doc["tracks"] = sorted(tracks, key=lambda t: t["id"])
-    doc["trackCount"] = len(tracks)
+    doc["trackCount"] = sum(1 for t in tracks if any(not f["static"] for l in t["layers"]
+                                                      for f in l["fields"]))
     doc["cdlCount"] = len(doc["cdls"])
     return doc
 
@@ -1003,6 +1060,8 @@ def build_snapshot(archive_path, project=None, captured_at=None):
 
     order = ([active] if active in transports else []) + sorted(t for t in transports if t != active)
     builder = TrackBuilder(archive, debug)
+    census = sorted(p for p in archive.names(TRACK_ROOT + "/") if p.endswith(".apx")
+                    and p.count("/") == 2)
     for name in order:
         data = transports[name]
         record = {"name": name, "setlist": None, "trackCount": 0, "trackRefs": [], "error": None}
@@ -1015,8 +1074,12 @@ def build_snapshot(archive_path, project=None, captured_at=None):
         # A transport with no LTC input still reports a frame rate in Designer;
         # on the reference show it was the active transport's.
         fps = _transport_fps(archive, data, debug) or active_fps
-        record["trackRefs"] = [builder.add(t, fps)
-                               for t in parse_setlist(archive.read(setlists[0]), setlists[0])]
+        # automatic.apx is empty on disk -- Designer fills it with every track on
+        # load -- so reading it gave a transport on the automatic setlist no
+        # tracks at all, and a project played that way an empty snapshot.
+        refs = (census if setlists[0] == AUTOMATIC_SETLIST_PATH
+                else parse_setlist(archive.read(setlists[0]), setlists[0]))
+        record["trackRefs"] = [builder.add(t, fps) for t in refs]
         record["trackCount"] = len(record["trackRefs"])
         snapshot["transports"].append(record)
 
@@ -1024,8 +1087,6 @@ def build_snapshot(archive_path, project=None, captured_at=None):
     snapshot["tracks"] = builder.sorted_records()
     snapshot["trackCount"] = len(snapshot["tracks"])
 
-    census = sorted(p for p in archive.names(TRACK_ROOT + "/") if p.endswith(".apx")
-                    and p.count("/") == 2)
     ids = [builder.id_for(p) for p in census]
     snapshot["showfile"]["trackIds"] = ids
     snapshot["showfile"]["trackCount"] = len(ids)

@@ -79,17 +79,22 @@ works: two archives, two plugin captures, or one of each.
 The keyframes file is a separate JSON document (`"format": "d3_keyframes"`)
 holding every **animated** layer parameter in the show: a parameter with two or
 more keys, or one driven by an expression. A single key is just the parameter's
-constant value, and a show holds tens of thousands of those, so they're left
-out. The exception is a layer's **CDL**: a grade is nearly always set with one
+constant value, and a show holds tens of thousands of those. Most sit at their
+default and are left out; one that differs from the default is a setting
+someone made (a blend mode, a mapping, an end-point behaviour) and is kept,
+marked `"static": true` -- 9,121 of them on the reference show, against some
+144,000 left at their defaults. The comparison is on the stored values, so
+rounding cannot make a default look changed. The exception is a layer's **CDL**: a grade is nearly always set with one
 key, so a `cdl` field is exported whenever it applies a CDL (see
 [CDLs](#cdls)). It covers every track in the show, not just the ones in a
 setlist. The diff tool doesn't read this file.
 
 ```json
 {
-  "format": "d3_keyframes", "formatVersion": 3,
+  "format": "d3_keyframes", "formatVersion": 4, "scope": "animated+set",
   "project": "my_show", "capturedAt": "2026-09-13T15:38:31-07:00",
-  "trackCount": 69, "layerCount": 872, "fieldCount": 1625, "keyCount": 4499,
+  "trackCount": 64, "layerCount": 958, "fieldCount": 1794, "keyCount": 4984,
+  "staticCount": 9121,
   "cdlCount": 1,
   "cdls": {
     "objects/cdl/300_lasers_yellow_jc": {
@@ -172,6 +177,13 @@ once into the top-level `cdls` table, keyed by that same value:
 In formatVersion 2, a `cdl` field was left out unless it had two or more keys,
 which dropped nearly every graded layer.
 
+FormatVersion 4 added the set values: every field carries `static`, and one-key
+fields that differ from their default are exported with it true.
+`fieldCount`, `keyCount`, `layerCount` and `trackCount` still count animation
+only, so they read the same as in format 3; `staticCount` counts the settings.
+A layer or track holding only settings is now in the file, which grew the
+reference show's from 1.6 MB to 6.8 MB.
+
 ## What's in the snapshot
 
 The same fields as a plugin capture:
@@ -207,8 +219,13 @@ build fields to show as changed.
   tracks and 2,270 layers matched. Other Designer versions may lay objects out
   differently. If the parser meets something it doesn't know, it stops with an
   error rather than guessing.
-- **`renderEnable` is inferred.** Every layer in the reference project was
-  enabled, so the byte used for disabled layers hasn't been checked.
+- **Layers carry `enabled` and `muted`, which the plugin does not write.**
+  `enabled` is Designer's Disable, saved with the project, and false inside a
+  disabled group too. `muted` is the director's mute at the moment of saving --
+  mute is per machine and resets on a track change -- and is `null` when the
+  director state cannot be read. Both were located on a two-layer test project,
+  one change at a time. `renderEnable` is neither and is 1 on every layer seen
+  so far.
 - **Some orderings differ from the plugin.** Transports after the active one,
   and the showfile census, are sorted alphabetically. The diff tool matches both
   by name, so this doesn't show up as a change.

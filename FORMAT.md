@@ -66,7 +66,7 @@ Name = file stem. `lengthInBeats` = `lengthInSec * bpm / 60`.
 ### Layers (inside a track)
 
 ```
-SuperLayer v9: cstr name, f64 tStart, f64 duration, 8 bytes, u8 renderEnable, u8, u8
+SuperLayer v9: cstr name, f64 tStart, f64 duration, 8 bytes, u8 renderEnable, u8 enabled, u8
 GroupLayer v2: u32 nChildren, child layers..., u32 nArrows + Arrow objects
 Layer v15:     u32, u32, u32 nBases, nBases x (cstr, u32)   e.g. ColourShift, ProjectionAwareModule
                cstr moduleType                             e.g. VariableVideoModule
@@ -75,8 +75,14 @@ Layer v15:     u32, u32, u32 nBases, nBases x (cstr, u32)   e.g. ColourShift, Pr
                u8, `null` or DmxPatch object, u32 n + n x u32, u32 n + n x u32, u32
 ```
 
-`renderEnable` is inferred: every layer in the reference archive is enabled, so
-a disabled layer has never been checked against this byte.
+`enabled` is Designer's Disable (D+click), saved with the project. It was found by
+saving a project with one layer disabled and its sibling not: that byte was the
+only difference. A disabled group disables its children, so the snapshot's
+`enabled` is the layer's own flag and every enclosing group's.
+
+`renderEnable` stays 1 on a disabled layer and on a muted one, and is 1 on every
+layer of the reference archive, so what clears it is still unknown. It is not
+Disable, and it is not Mute.
 
 ### FieldSequence / keyframes
 
@@ -170,4 +176,9 @@ Tag types: 0 = timecode, 1 = cue, 2 = MIDI.
 - TimecodeTransportLtc v2: `cstr audioLine, u32 smpteClockType` → frame rate.
 - Active transport: the last `objects/transportmanager/` path in
   `internal/localstate/_directorstate_.apx`.
+- Muted layers: LocalState v25 opens with `muted`, a MapTable of layer uid to bool,
+  written as `u32 n, n x (u64 uid, u8 flag)`. Mute is per machine and resets on a
+  track change, so this is the director's mutes at the moment of saving. Found by
+  muting one layer between two saves: the map gained exactly that layer's uid.
+  A layer counts as muted when it or an enclosing group is in the map.
 - `conf/depends.txt`: `d3 <versionName> <revision> <buildId> <date>`.

@@ -21,7 +21,7 @@
   var FPS_BY_CLOCK = { 0: 23.976, 1: 24.0, 2: 25.0, 3: 29.97, 4: 29.97, 5: 30.0 };
   var TAG_NAMES = { 0: 'tc', 1: 'cue', 2: 'midi' };
   var TAG_TC = 0;
-  var KEYFRAMES_FORMAT_VERSION = 3;
+  var KEYFRAMES_FORMAT_VERSION = 4;
   // Exported even with a single key -- see CDL_VALUE_TYPE in d3_extract.py.
   var CDL_VALUE_TYPE = 'CDL::RP';
   // Inferred, not confirmed in Designer -- see INTERPOLATION in d3_extract.py.
@@ -289,7 +289,10 @@
     return paths;
   }
 
-  function readLayer(r, groupPath, out) {
+  /* `groupUids` carries the enclosing groups so a mute set on a group can reach
+   * the layers inside it; `parentEnabled` does the same for disable, which
+   * Designer applies to a group's children. */
+  function readLayer(r, groupPath, out, groupUids, parentEnabled) {
     var head = r.objectHead(), cls = head[0], uid = head[1];
     r.section('SuperLayer');
     var name = r.cstr();
@@ -297,11 +300,18 @@
     var duration = r.f64();
     r.skip(8);
     var renderEnable = r.u8() !== 0;
-    r.skip(2);
+    // Designer's Disable (D+click), saved with the project. Located by saving one
+    // project with a layer disabled and its sibling not: this byte was the only
+    // difference, and renderEnable stayed 1 on both. The byte is read first: put
+    // parentEnabled first and && skips the read inside a disabled group.
+    var enabled = r.u8() !== 0 && parentEnabled;
+    r.skip(1);
 
     if (cls === 'GroupLayer') {
       r.section('GroupLayer');
-      for (var c = r.u32(); c > 0; c--) readLayer(r, groupPath.concat([name]), out);
+      for (var c = r.u32(); c > 0; c--) {
+        readLayer(r, groupPath.concat([name]), out, groupUids.concat([uid]), enabled);
+      }
       readArrows(r);
       return;
     }
@@ -329,7 +339,8 @@
 
     out.push({
       name: name, uid: uid, type: module || 'Layer', groupPath: groupPath.slice(),
-      renderEnable: renderEnable, tStart: tStart, tEnd: tStart + duration, fields: fields,
+      groupUids: groupUids.slice(), renderEnable: renderEnable, enabled: enabled,
+      tStart: tStart, tEnd: tStart + duration, fields: fields,
       notchBlock: configPaths.find(function (x) { return x.startsWith('objects/notchfile/'); }) || null
     });
   }
@@ -340,7 +351,7 @@
     r.objectHead('Track');
     r.section('SuperTrack');
     var layers = [];
-    for (var n = r.u32(); n > 0; n--) readLayer(r, [], layers);
+    for (var n = r.u32(); n > 0; n--) readLayer(r, [], layers, [], true);
     r.skip(8);
     readArrows(r);
     var bpm = r.f32();
@@ -517,9 +528,38 @@
     });
   }
 
+  /* The layers muted on the director when the project was saved, as a Set of
+   * uid strings, or null when that cannot be read. Mute is per machine and
+   * resets on a track change, so it lives in the director's LocalState rather
+   * than on the layer: `muted` is a MapTable[layer uid, bool], written as
+   * u32 n, then n x (u64 uid, u8 flag). Located the same way as `enabled` --
+   * muting one layer between two saves added exactly that layer's uid here. */
+  function mutedLayers(archive, debug) {
+    if (!archive.has(DIRECTOR_STATE)) return null;
+    try {
+      var r = new Reader(archive.read(DIRECTOR_STATE), DIRECTOR_STATE);
+      r.openObject();
+      r.objectHead('LocalState');
+      r.section('LocalState');
+      var n = r.u32();
+      if (r.i + n * 9 > r.b.length) r.fail(n + ' muted layers would run past the end');
+      var out = new Set();
+      for (; n > 0; n--) {
+        var uid = r.v.getBigUint64(r.i, true);
+        r.skip(8);
+        if (r.u8()) out.add(uid.toString());
+      }
+      return out;
+    } catch (e) {
+      debug.push('mute state not read: ' + e.message);
+      return null;
+    }
+  }
+
   function TrackBuilder(archive, debug) {
     this.archive = archive;
     this.debug = debug;
+    this.muted = mutedLayers(archive, debug);
     this.media = new MediaResolver(archive, debug);
     this.records = new Map();
     this.byPath = new Map();
@@ -607,11 +647,17 @@
       });
     });
 
+    var muted = this.muted;
     var layers = track.layers.map(function (layer) {
       var bStart = num(toBeat(layer.tStart)), bEnd = num(toBeat(layer.tEnd));
       return {
         name: layer.name, uid: uidInt(layer.uid), type: layer.type, groupPath: layer.groupPath,
-        renderEnable: layer.renderEnable, tStart: num(layer.tStart), tEnd: num(layer.tEnd),
+        renderEnable: layer.renderEnable, enabled: layer.enabled,
+        muted: muted ? [layer.uid].concat(layer.groupUids).some(function (u) {
+          var n = uidInt(u);
+          return n !== null && muted.has(n.toString());
+        }) : null,
+        tStart: num(layer.tStart), tEnd: num(layer.tEnd),
         bStart: bStart, bEnd: bEnd, tcStart: timecode(bStart), tcEnd: timecode(bEnd),
         media: self.layerMedia(layer)
       };
@@ -779,6 +825,9 @@
     var order = (transports.has(active) ? [active] : []).concat(
       Array.from(transports.keys()).filter(function (t) { return t !== active; }).sort(pyCompare));
     var builder = new TrackBuilder(archive, debug);
+    var census = archive.names(TRACK_ROOT + '/').filter(function (p) {
+      return p.endsWith('.apx') && p.split('/').length === 3;
+    }).sort(pyCompare);
     order.forEach(function (name) {
       var bytes = transports.get(name);
       var record = { name: name, setlist: null, trackCount: 0, trackRefs: [], error: null };
@@ -791,7 +840,12 @@
       record.setlist = stem(setlists[0]);
       var fps = transportFps(archive, bytes, debug);
       if (fps === null) fps = activeFps;
-      record.trackRefs = parseSetlist(archive.read(setlists[0]), setlists[0]).map(function (t) {
+      // automatic.apx is empty on disk -- Designer fills it with every track on
+      // load -- so reading it gave a transport on the automatic setlist no
+      // tracks at all, and a project played that way an empty snapshot.
+      var refs = setlists[0] === AUTOMATIC_SETLIST_PATH ? census
+        : parseSetlist(archive.read(setlists[0]), setlists[0]);
+      record.trackRefs = refs.map(function (t) {
         return builder.add(t, fps);
       });
       record.trackCount = record.trackRefs.length;
@@ -802,9 +856,6 @@
     snapshot.tracks = builder.sortedRecords();
     snapshot.trackCount = snapshot.tracks.length;
 
-    var census = archive.names(TRACK_ROOT + '/').filter(function (p) {
-      return p.endsWith('.apx') && p.split('/').length === 3;
-    }).sort(pyCompare);
     snapshot.showfile.trackIds = census.map(function (p) { return builder.idFor(p); });
     snapshot.showfile.trackCount = census.length;
     return snapshot;
@@ -872,6 +923,9 @@
   /* Every animated layer parameter in the show: two or more keys, or driven by
    * an expression, plus any CDL field that applies a CDL. Same document as
    * build_keyframes in d3_extract.py. */
+  // The counts keep their format-3 meaning: animation, not settings.
+  function animatedLayer(l) { return l.fields.some(function (f) { return !f.static; }); }
+
   function buildKeyframes(buffer, options) {
     options = options || {};
     var archive = buffer instanceof Archive ? buffer : new Archive(buffer);
@@ -884,12 +938,12 @@
       capturedAt: options.capturedAt || localIso(new Date()),
       project: options.project || fileName.replace(/\.[^.]*$/, ''),
       source: fileName,
-      scope: 'animated',
+      scope: 'animated+set',
       interpolation: {
         codes: codes,
         note: 'Inferred from how the codes are used across a real show; not confirmed in Designer.'
       },
-      trackCount: 0, layerCount: 0, fieldCount: 0, keyCount: 0,
+      trackCount: 0, layerCount: 0, fieldCount: 0, keyCount: 0, staticCount: 0,
       cdlCount: 0, cdls: {},
       tracks: [],
       writtenTo: options.writtenTo || null
@@ -927,7 +981,9 @@
               return keyframeValue(cls, key[1]);
             })).filter(function (v) { return v; });
           }
-          if (field.keys.length < 2 && !field.expression && !cdlRefs.length) return;
+          var isStatic = field.keys.length === 1 && !field.expression && !cdlRefs.length &&
+                         field.keys[0][1] !== field.default;
+          if (field.keys.length < 2 && !field.expression && !cdlRefs.length && !isStatic) return;
           cdlRefs.forEach(function (ref) {
             if (!Object.prototype.hasOwnProperty.call(doc.cdls, ref)) doc.cdls[ref] = cdlRecord(archive, ref);
           });
@@ -942,6 +998,7 @@
             labelSource: source,
             valueType: field.valueType,
             expression: field.expression,
+            static: isStatic,
             default: keyframeValue(cls, field.default),
             keys: field.keys.map(function (key) {
               return {
@@ -965,17 +1022,20 @@
           notchBlock: layer.notchBlock,
           fields: fields
         });
-        doc.fieldCount += fields.length;
-        fields.forEach(function (f) { doc.keyCount += f.keys.length; });
+        fields.forEach(function (f) {
+          if (f.static) { doc.staticCount++; return; }
+          doc.fieldCount++;
+          doc.keyCount += f.keys.length;
+        });
       });
       if (layers.length) {
         tracks.push({ id: trackId(stem(path), path), name: stem(path), path: path,
                       bpm: num(track.bpm), layers: layers });
-        doc.layerCount += layers.length;
+        doc.layerCount += layers.filter(animatedLayer).length;
       }
     });
     doc.tracks = tracks.sort(function (a, b) { return pyCompare(a.id, b.id); });
-    doc.trackCount = tracks.length;
+    doc.trackCount = tracks.filter(function (t) { return t.layers.some(animatedLayer); }).length;
     doc.cdlCount = Object.keys(doc.cdls).length;
     return doc;
   }
